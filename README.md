@@ -21,9 +21,9 @@ Minimal Pulumi (TypeScript) bootstrap for an Amazon EKS cluster. Creates only th
 | Cluster | EKS 1.35, private endpoint, OIDC, access entries (admin + EC2_LINUX) |
 | Addons (managed, auto-versioned) | vpc-cni, kube-proxy, coredns, eks-pod-identity-agent |
 | Compute | One 2-node Bottlerocket managed group (m7a.large, `CriticalAddonsOnly` taint) — hosts ArgoCD + Karpenter controller only |
-| IAM | Pod Identity / IRSA roles for Karpenter, AWS LB Controller, External Secrets, Fluent Bit |
+| IAM | Pod Identity for Karpenter; IRSA for AWS LB Controller, EBS CSI, EFS CSI, VPC-CNI, External Secrets, Fluent Bit |
 | Karpenter prereqs | SQS interruption queue, EventBridge rules, controller + node IAM (Karpenter v1 creates instance profiles dynamically) |
-| Remote access | AWS Client VPN, mTLS, Pulumi-generated PKI, ACM-uploaded |
+| Remote access | AWS Client VPN, mTLS, Pulumi-generated PKI, ACM-uploaded; optional multi-AZ HA (`vpnHighAvailability`) |
 | GitOps seed | ArgoCD Helm chart, GitOps-Bridge cluster-secret, root `Application` CR |
 
 ## What this repo does NOT install
@@ -63,8 +63,8 @@ make up
 
 # 5. Get on the cluster
 make vpn-config                               # writes ./client.ovpn
-# (connect via your OpenVPN client)
-make kubeconfig                               # writes ~/.kube/eks-pulumi-main
+# (connect via your OpenVPN client; `make up` already wrote ~/.kube/eks-pulumi-main)
+export KUBECONFIG=~/.kube/eks-pulumi-main
 kubectl get nodes
 kubectl get applications -n argocd            # root-app + GitOps children
 ```
@@ -85,6 +85,11 @@ config:
   eks-pulumi:argoBootstrapRepoUrl: "https://github.com/<you>/eks-argo-bootstrap.git"
   eks-pulumi:argoBootstrapRepoRevision: "HEAD"
   eks-pulumi:argoBootstrapRepoPath: "bootstrap"
+
+  # eks-pulumi:vpnHighAvailability: false                # true = one assoc per private subnet (~$72/mo per extra AZ)
+
+  # eks-pulumi:externalSecretsAllowedSecretArns:         # opt-in allow-list; default scope is secret:<project>-<stack>-*
+  #   - "arn:aws:secretsmanager:us-west-2:<ACCT>:secret:my-app-*"
 ```
 
 Stack name is `main` (not `stage` / `prod`) — this is a base, not an environment.
@@ -118,7 +123,7 @@ s3://eks-pulumi-state-<account-id>-us-west-2?region=us-west-2&awssdk=v2
 
 ## GitOps Bridge
 
-The public `eks-argo-bootstrap` repo contains zero account-specific values. All ARNs, hostnames, account IDs, and queue names live as **annotations on a cluster `Secret`** that Pulumi plants in the `argocd` namespace. ApplicationSets in the GitOps repo template these into Helm values via `{{ metadata.annotations.<key> }}`.
+The public `eks-argo-bootstrap` repo contains zero account-specific values. All ARNs, account IDs, region, cluster name, OIDC issuer URL, and queue names live as **annotations on a cluster `Secret`** that Pulumi plants in the `argocd` namespace. ApplicationSets in the GitOps repo template these into Helm values via `{{ metadata.annotations.<key> }}`.
 
 Pattern: <https://github.com/gitops-bridge-dev/gitops-bridge>
 
@@ -139,8 +144,6 @@ Enforced order:
 4. `pulumi destroy`
 5. Sweep orphan ENIs as a backstop
 
-If a teardown wedges: open the Pulumi destroy log, identify the stuck resource, run the matching script in `scripts/unstick/` (finalizer patches for Ingress / NodeClaim / Namespace). Standard rookie hangs documented inline.
-
 ## Repo structure
 
 ```
@@ -152,11 +155,11 @@ eks-pulumi/
     bootstrap-state-bucket.sh                 # idempotent
     pre-destroy.sh
     nuke-orphan-enis.sh
-    unstick/                                  # finalizer-patch fallbacks
   infra/
     Pulumi.yaml                               # no backend.url (it's in .env)
     Pulumi.main.yaml.example                  # committed
     package.json
+    pnpm-lock.yaml
     tsconfig.json
     pulumi.config.ts                          # typed config loader
     src/
@@ -189,7 +192,7 @@ For a learning cluster: `make down` after each session brings cost to ~$0/mo (S3
 ## Upgrade path
 
 - **Kubernetes version:** bump `kubernetesVersion` in `Pulumi.main.yaml` once a new minor has been in EKS for 3+ months. Managed addons re-resolve to AWS-recommended defaults on the next `pulumi up` automatically — no separate version bumps in this repo.
-- **Pulumi `@pulumi/eks` major bumps:** read release notes; cluster recreation is rare but possible.
+- **`@pulumi/aws` major bumps:** read release notes; resource-shape diffs are usually cosmetic but a `pulumi preview` first is cheap.
 - **Karpenter chart, AWS LB Controller, etc.:** version-pinned in `eks-argo-bootstrap`, not here.
 
 ## License

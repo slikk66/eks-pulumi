@@ -36,7 +36,7 @@ help:
 	@echo "  Setup (one-time):"
 	@echo "    bootstrap-state-bucket   Create the Pulumi S3 state bucket (idempotent)"
 	@echo "    login                    pulumi login + stack select"
-	@echo "    install                  yarn install"
+	@echo "    install                  pnpm install"
 	@echo ""
 	@echo "  Lifecycle:"
 	@echo "    preview                  pulumi preview"
