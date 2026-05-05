@@ -1,0 +1,52 @@
+# Local config (gitignored; .env.example is committed)
+.env
+.env.local
+
+# Claude anything
+.claude/
+
+# Dangeresque: only worker run artifacts; rules + config + prompts are committed
+.dangeresque/runs/
+
+# Pulumi stack files (real values gitignored; .example committed; project file committed)
+infra/Pulumi.*.yaml
+!infra/Pulumi.yaml
+!infra/Pulumi.*.yaml.example
+
+# Node
+node_modules/
+.pnpm-store/
+pnpm-debug.log
+npm-debug.log
+yarn-error.log
+
+# TypeScript build output
+infra/bin/
+*.tsbuildinfo
+
+# VPN / PKI material (Pulumi generates these; never commit)
+*.ovpn
+*.pem
+*.crt
+*.key
+*.csr
+
+# Kubeconfig (defensive — make kubeconfig writes to ~/.kube)
+*.kubeconfig
+kubeconfig
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Logs
+*.log
+pulumi-output.log
+
+# Session handoff doc
+HANDOFF.md

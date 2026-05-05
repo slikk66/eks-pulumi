@@ -1,0 +1,18 @@
+config:
+    aws:region: us-west-2
+
+    # Cluster
+    eks-pulumi:kubernetesVersion: "1.35"
+    eks-pulumi:vpcCidr: "10.50.0.0/16"
+    eks-pulumi:enableNat: false                 # true = workers in private subnets, multi-AZ NAT
+
+    # Client VPN
+    eks-pulumi:clientVpnCidr: "10.100.0.0/22"   # client IP pool, must not overlap vpcCidr
+
+    # Admin role for EKS access entry (your SSO/IAM admin role)
+    eks-pulumi:adminRoleArn: "arn:aws:iam::<ACCOUNT_ID>:role/<YOUR_ADMIN_ROLE>"
+
+    # GitOps bootstrap (ArgoCD root Application source)
+    eks-pulumi:argoBootstrapRepoUrl: "https://github.com/<your-org>/eks-argo-bootstrap.git"
+    eks-pulumi:argoBootstrapRepoRevision: "HEAD"
+    eks-pulumi:argoBootstrapRepoPath: "bootstrap"

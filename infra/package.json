@@ -1,0 +1,30 @@
+{
+    "name": "eks-pulumi-infra",
+    "version": "0.1.0",
+    "private": true,
+    "main": "index.ts",
+    "engines": {
+        "node": ">=22"
+    },
+    "devDependencies": {
+        "@types/node": "^22",
+        "typescript": "^5.4.0"
+    },
+    "dependencies": {
+        "@pulumi/aws": "^7.0.0",
+        "@pulumi/awsx": "^3.0.0",
+        "@pulumi/eks": "^4.0.0",
+        "@pulumi/kubernetes": "^4.18.0",
+        "@pulumi/pulumi": "^3.150.0",
+        "@pulumi/random": "^4.18.0",
+        "@pulumi/tls": "^5.1.0"
+    },
+    "pnpm": {
+        "onlyBuiltDependencies": [
+            "@pulumi/docker",
+            "@pulumi/docker-build",
+            "@pulumi/kubernetes",
+            "protobufjs"
+        ]
+    }
+}

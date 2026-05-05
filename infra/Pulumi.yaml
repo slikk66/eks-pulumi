@@ -1,0 +1,10 @@
+name: eks-pulumi
+description: Minimal Pulumi bootstrap for an EKS cluster (ArgoCD takes over post-bootstrap)
+runtime:
+    name: nodejs
+    options:
+        packagemanager: pnpm
+config:
+    pulumi:tags:
+        value:
+            pulumi:template: aws-typescript

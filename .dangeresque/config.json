@@ -1,0 +1,61 @@
+{
+  "engine": "claude",
+  "model": "claude-opus-4-7",
+  "effort": "max",
+  "verify": {
+    "enabled": true,
+    "modes": [
+      "IMPLEMENT",
+      "REFACTOR",
+      "TEST",
+      "VERIFY"
+    ],
+    "commands": [
+      {
+        "name": "install",
+        "cmd": "cd infra && pnpm install --frozen-lockfile",
+        "on_failure": "block",
+        "timeout_ms": 300000
+      },
+      {
+        "name": "typecheck",
+        "cmd": "cd infra && npx tsc --noEmit",
+        "on_failure": "block",
+        "timeout_ms": 120000
+      }
+    ]
+  },
+  "scope": {
+    "opportunistic": {
+      "enabled": true,
+      "maxFiles": 0,
+      "maxLines": 0,
+      "denyGlobs": [
+        "**/*.lock",
+        "pnpm-lock.yaml",
+        "**/.env*",
+        ".dangeresque/**",
+        "infra/Pulumi.yaml",
+        "infra/Pulumi.*.yaml",
+        "**/secrets/**"
+      ]
+    }
+  },
+  "allowedTools": [
+    "Bash(cd *)",
+    "Bash(pnpm *)",
+    "Bash(npx *)",
+    "Bash(chmod *)",
+    "Bash(mkdir *)",
+    "Bash(ls *)",
+    "Bash(find *)",
+    "Bash(grep *)",
+    "Bash(test *)",
+    "Bash(git status*)",
+    "Bash(git diff*)",
+    "Bash(git log*)",
+    "Bash(tsc *)",
+    "WebFetch",
+    "WebSearch"
+  ]
+}
