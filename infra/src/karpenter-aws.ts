@@ -17,6 +17,11 @@ import { prefix } from "../pulumi.config";
 import { cluster } from "./cluster";
 import { karpenterControllerRoleArn } from "./iam";
 
+// IMPORTANT: this name is also constructed as a literal in iam.ts (the
+// Karpenter controller policy needs the queue ARN before this file runs,
+// so iam.ts builds it from prefix + region + account). Any rename of the
+// queue MUST be mirrored in iam.ts or interruption handling silently
+// breaks at runtime.
 const queueName = `${prefix}-karpenter-interruption`;
 
 // SQS interruption queue ----------------------------------------------------
