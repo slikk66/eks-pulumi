@@ -269,15 +269,26 @@ const albControllerPolicyDoc = pulumi
                     },
                 },
                 {
-                    // Resource:"*" required — child ARN does not exist at
-                    // request time and CreateListener/CreateRule do not
-                    // accept tag-on-create. AddTags via Statement 14.
+                    // Resource:"*" — child ARN does not exist at request
+                    // time. RequestTag bound to cluster: ALB Controller
+                    // v2.5+ tags listener/listener-rule at create with
+                    // elbv2.k8s.aws/cluster=<clusterName> when
+                    // --cluster-name is set (chart default). Ref:
+                    // https://kubernetes-sigs.github.io/aws-load-balancer-controller/latest/guide/ingress/annotations/
                     Effect: "Allow",
                     Action: [
                         "elasticloadbalancing:CreateListener",
                         "elasticloadbalancing:CreateRule",
                     ],
                     Resource: "*",
+                    Condition: {
+                        StringEquals: {
+                            "aws:RequestTag/elbv2.k8s.aws/cluster": cluster,
+                        },
+                        Null: {
+                            "aws:RequestTag/elbv2.k8s.aws/cluster": "false",
+                        },
+                    },
                 },
                 {
                     // Delete listener / rule scoped to listener and listener-
@@ -321,8 +332,12 @@ const albControllerPolicyDoc = pulumi
                     },
                 },
                 {
-                    // Listener / listener-rule AddTags/RemoveTags now bound
-                    // to cluster (was unscoped in upstream).
+                    // Listener / listener-rule AddTags/RemoveTags bound to
+                    // cluster on both ResourceTag and RequestTag. ALB
+                    // Controller v2.5+ includes elbv2.k8s.aws/cluster=
+                    // <clusterName> in AddTags requests (same default tag
+                    // it sets at create — see CreateListener stmt above).
+                    // https://kubernetes-sigs.github.io/aws-load-balancer-controller/latest/guide/ingress/annotations/
                     Effect: "Allow",
                     Action: [
                         "elasticloadbalancing:AddTags",
@@ -337,9 +352,10 @@ const albControllerPolicyDoc = pulumi
                     Condition: {
                         StringEquals: {
                             "aws:ResourceTag/elbv2.k8s.aws/cluster": cluster,
+                            "aws:RequestTag/elbv2.k8s.aws/cluster": cluster,
                         },
                         Null: {
-                            "aws:RequestTag/elbv2.k8s.aws/cluster": "true",
+                            "aws:RequestTag/elbv2.k8s.aws/cluster": "false",
                         },
                     },
                 },
@@ -481,12 +497,21 @@ new aws.iam.RolePolicyAttachment(`${prefix}-vpc-cni-attach`, {
 //   - TagResource and DeleteAccessPoint Resource narrowed from "*" to the
 //     access-point ARN pattern (the driver only ever tags or deletes
 //     access-points it created).
+//   - efs.csi.aws.com/cluster tag value bound to clusterName (not literal
+//     "true") so a neighbour EFS-CSI deployment in the same account
+//     reusing the upstream tag does not share blast radius. REQUIRES the
+//     GitOps repo's EFS-CSI chart to set
+//     controller.tags.efs.csi.aws.com/cluster=<clusterName> so the driver
+//     emits that value at access-point create time. Until that wiring
+//     lands the access-point create flow is denied — defense-in-depth
+//     fail-closed; tighten here, coordinate downstream.
+//   - StringLike → StringEquals (no glob in tag value; consistency).
 //   - Describe* keep Resource:"*" — EFS Describe* lacks resource-level
 //     perms per AWS Service Authorization Reference.
 
 const efsCsiPolicyDoc = pulumi
-    .all([region, accountId])
-    .apply(([reg, acct]) => {
+    .all([region, accountId, clusterName])
+    .apply(([reg, acct, cluster]) => {
         const accessPointArn =
             `arn:${partition}:elasticfilesystem:${reg}:${acct}:access-point/*`;
         return JSON.stringify({
@@ -506,13 +531,14 @@ const efsCsiPolicyDoc = pulumi
                 },
                 {
                     // Resource:"*" required — access-point ARN does not exist
-                    // at request time. Tag-on-create scoped via RequestTag.
+                    // at request time. Tag-on-create scoped via RequestTag
+                    // bound to clusterName.
                     Effect: "Allow",
                     Action: ["elasticfilesystem:CreateAccessPoint"],
                     Resource: "*",
                     Condition: {
-                        StringLike: {
-                            "aws:RequestTag/efs.csi.aws.com/cluster": "true",
+                        StringEquals: {
+                            "aws:RequestTag/efs.csi.aws.com/cluster": cluster,
                         },
                     },
                 },
@@ -521,8 +547,8 @@ const efsCsiPolicyDoc = pulumi
                     Action: ["elasticfilesystem:TagResource"],
                     Resource: accessPointArn,
                     Condition: {
-                        StringLike: {
-                            "aws:ResourceTag/efs.csi.aws.com/cluster": "true",
+                        StringEquals: {
+                            "aws:ResourceTag/efs.csi.aws.com/cluster": cluster,
                         },
                     },
                 },
@@ -532,7 +558,7 @@ const efsCsiPolicyDoc = pulumi
                     Resource: accessPointArn,
                     Condition: {
                         StringEquals: {
-                            "aws:ResourceTag/efs.csi.aws.com/cluster": "true",
+                            "aws:ResourceTag/efs.csi.aws.com/cluster": cluster,
                         },
                     },
                 },
@@ -800,9 +826,18 @@ const karpenterControllerPolicyDoc = pulumi
                     },
                 },
                 {
+                    // Karpenter only reads two SSM parameter trees for AMI
+                    // discovery: EKS-optimised AL2/AL2023 and Bottlerocket
+                    // (per karpenter.sh AMI selectors). Narrowing avoids
+                    // catching unrelated /aws/service/* trees (MSK, RDS
+                    // proxy, ECS, etc.) that the controller never reads.
+                    // https://karpenter.sh/docs/concepts/nodeclasses/#specamifamily
                     Sid: "AllowSSMReadActions",
                     Effect: "Allow",
-                    Resource: `arn:${partition}:ssm:${reg}::parameter/aws/service/*`,
+                    Resource: [
+                        `arn:${partition}:ssm:${reg}::parameter/aws/service/eks/optimized-ami/*`,
+                        `arn:${partition}:ssm:${reg}::parameter/aws/service/bottlerocket/aws-k8s-*`,
+                    ],
                     Action: "ssm:GetParameter",
                 },
                 {
