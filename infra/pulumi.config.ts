@@ -23,12 +23,42 @@ if (!Number.isInteger(azCount) || azCount < 2 || azCount > 6) {
 
 // Client VPN
 export const clientVpnCidr = cfg.get("clientVpnCidr") ?? "10.100.0.0/22";
+// Reject overlapping vpcCidr / clientVpnCidr at config-load. A typo in
+// Pulumi.<stack>.yaml otherwise surfaces as a cryptic mid-apply AWS error.
+function cidrToRange(cidr: string): [number, number] {
+    const [ip, prefixStr] = cidr.split("/");
+    const prefix = parseInt(prefixStr, 10);
+    if (!Number.isInteger(prefix) || prefix < 0 || prefix > 32) {
+        throw new Error(`Invalid CIDR prefix: ${cidr}`);
+    }
+    const octets = ip.split(".").map(o => parseInt(o, 10));
+    if (octets.length !== 4 || octets.some(o => !Number.isInteger(o) || o < 0 || o > 255)) {
+        throw new Error(`Invalid CIDR octet: ${cidr}`);
+    }
+    const baseInt = ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0;
+    const size = (2 ** (32 - prefix)) >>> 0;
+    return [baseInt, (baseInt + size - 1) >>> 0];
+}
+const [vpcStart, vpcEnd] = cidrToRange(vpcCidr);
+const [vpnStart, vpnEnd] = cidrToRange(clientVpnCidr);
+if (vpcStart <= vpnEnd && vpnStart <= vpcEnd) {
+    throw new Error(
+        `vpcCidr (${vpcCidr}) and clientVpnCidr (${clientVpnCidr}) must not overlap. ` +
+        `Pick non-overlapping ranges; defaults are 10.50.0.0/16 and 10.100.0.0/22.`,
+    );
+}
 // false (default) = single subnet association (cost-sensitive). true = one
 // association per private subnet (multi-AZ HA, ~$72/mo per extra association).
 export const vpnHighAvailability = cfg.getBoolean("vpnHighAvailability") ?? false;
 
 // EKS access entry
 export const adminRoleArn = cfg.require("adminRoleArn");
+if (!/^arn:aws:iam::\d{12}:role\/[\w+=,.@-]+$/.test(adminRoleArn)) {
+    throw new Error(
+        `adminRoleArn (${adminRoleArn}) is not a valid IAM role ARN. ` +
+        `Expected: arn:aws:iam::<12-digit-account>:role/<role-name>`,
+    );
+}
 
 // ArgoCD root Application source
 export const argoBootstrapRepoUrl = cfg.require("argoBootstrapRepoUrl");
