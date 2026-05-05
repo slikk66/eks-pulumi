@@ -53,7 +53,7 @@ export const vpnHighAvailability = cfg.getBoolean("vpnHighAvailability") ?? fals
 
 // EKS access entry
 export const adminRoleArn = cfg.require("adminRoleArn");
-if (!/^arn:aws:iam::\d{12}:role\/[\w+=,.@-]+$/.test(adminRoleArn)) {
+if (!/^arn:aws:iam::\d{12}:role\/[\w+=,.@/-]+$/.test(adminRoleArn)) {
     throw new Error(
         `adminRoleArn (${adminRoleArn}) is not a valid IAM role ARN. ` +
         `Expected: arn:aws:iam::<12-digit-account>:role/<role-name>`,
