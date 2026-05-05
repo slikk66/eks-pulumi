@@ -16,3 +16,8 @@ config:
     eks-pulumi:argoBootstrapRepoUrl: "https://github.com/<your-org>/eks-argo-bootstrap.git"
     eks-pulumi:argoBootstrapRepoRevision: "HEAD"
     eks-pulumi:argoBootstrapRepoPath: "bootstrap"
+
+    # External Secrets IRSA — opt-in explicit allow-list of Secrets Manager ARNs.
+    # When omitted/empty, the role is scoped to `secret:<project>-<stack>-*` only.
+    # eks-pulumi:externalSecretsAllowedSecretArns:
+    #   - "arn:aws:secretsmanager:us-west-2:<ACCOUNT_ID>:secret:my-app-*"
