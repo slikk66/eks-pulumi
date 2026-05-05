@@ -181,4 +181,3 @@ export const clusterName: pulumi.Output<string> = cluster.name;
 export const clusterEndpoint: pulumi.Output<string> = cluster.endpoint;
 export const clusterCertificateAuthorityData: pulumi.Output<string> =
     cluster.certificateAuthority.apply(ca => ca.data);
-export const clusterSecurityGroupId: pulumi.Output<string> = clusterSg.id;

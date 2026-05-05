@@ -28,7 +28,6 @@ import { oidcProvider, clusterName } from "./cluster";
 import { vpcId } from "./vpc";
 
 const accountId = aws.getCallerIdentityOutput().accountId;
-const partition = "aws";
 
 // IRSA helper ----------------------------------------------------------------
 //
@@ -69,28 +68,6 @@ function irsaRole(
     });
 }
 
-// Pod Identity helper --------------------------------------------------------
-//
-// Service trust on pods.eks.amazonaws.com with sts:AssumeRole + sts:TagSession
-// (TagSession is required to carry the cluster/namespace/SA tags that the
-// Pod Identity agent injects into the assumed session).
-
-function podIdentityRole(name: string): aws.iam.Role {
-    const assumeRolePolicy = JSON.stringify({
-        Version: "2012-10-17",
-        Statement: [{
-            Effect: "Allow",
-            Principal: { Service: "pods.eks.amazonaws.com" },
-            Action: ["sts:AssumeRole", "sts:TagSession"],
-        }],
-    });
-
-    return new aws.iam.Role(`${prefix}-${name}-role`, {
-        name: `${prefix}-${name}-role`,
-        assumeRolePolicy,
-    });
-}
-
 // ALB Controller -------------------------------------------------------------
 //
 // Base policy fetched at IMPLEMENT time (2026-05-05) from kubernetes-sigs
@@ -112,7 +89,7 @@ function podIdentityRole(name: string): aws.iam.Role {
 const albControllerPolicyDoc = pulumi
     .all([clusterName, vpcId, region, accountId])
     .apply(([cluster, vpc, reg, acct]) => {
-        const vpcArn = `arn:${partition}:ec2:${reg}:${acct}:vpc/${vpc}`;
+        const vpcArn = `arn:aws:ec2:${reg}:${acct}:vpc/${vpc}`;
         return JSON.stringify({
             Version: "2012-10-17",
             Statement: [
@@ -120,7 +97,7 @@ const albControllerPolicyDoc = pulumi
                     Effect: "Allow",
                     Action: ["iam:CreateServiceLinkedRole"],
                     Resource:
-                        `arn:${partition}:iam::*:role/aws-service-role/elasticloadbalancing.amazonaws.com/*`,
+                        `arn:aws:iam::*:role/aws-service-role/elasticloadbalancing.amazonaws.com/*`,
                     Condition: {
                         StringEquals: {
                             "iam:AWSServiceName":
@@ -217,7 +194,7 @@ const albControllerPolicyDoc = pulumi
                     // RequestTag bound to cluster (was Null:false).
                     Effect: "Allow",
                     Action: ["ec2:CreateTags"],
-                    Resource: `arn:${partition}:ec2:*:*:security-group/*`,
+                    Resource: `arn:aws:ec2:*:*:security-group/*`,
                     Condition: {
                         StringEquals: {
                             "ec2:CreateAction": "CreateSecurityGroup",
@@ -229,7 +206,7 @@ const albControllerPolicyDoc = pulumi
                     // ResourceTag bound to cluster (was Null:false).
                     Effect: "Allow",
                     Action: ["ec2:CreateTags", "ec2:DeleteTags"],
-                    Resource: `arn:${partition}:ec2:*:*:security-group/*`,
+                    Resource: `arn:aws:ec2:*:*:security-group/*`,
                     Condition: {
                         StringEquals: {
                             "aws:ResourceTag/elbv2.k8s.aws/cluster": cluster,
@@ -299,10 +276,10 @@ const albControllerPolicyDoc = pulumi
                         "elasticloadbalancing:DeleteRule",
                     ],
                     Resource: [
-                        `arn:${partition}:elasticloadbalancing:*:*:listener/net/*/*/*`,
-                        `arn:${partition}:elasticloadbalancing:*:*:listener/app/*/*/*`,
-                        `arn:${partition}:elasticloadbalancing:*:*:listener-rule/net/*/*/*`,
-                        `arn:${partition}:elasticloadbalancing:*:*:listener-rule/app/*/*/*`,
+                        `arn:aws:elasticloadbalancing:*:*:listener/net/*/*/*`,
+                        `arn:aws:elasticloadbalancing:*:*:listener/app/*/*/*`,
+                        `arn:aws:elasticloadbalancing:*:*:listener-rule/net/*/*/*`,
+                        `arn:aws:elasticloadbalancing:*:*:listener-rule/app/*/*/*`,
                     ],
                     Condition: {
                         StringEquals: {
@@ -318,9 +295,9 @@ const albControllerPolicyDoc = pulumi
                         "elasticloadbalancing:RemoveTags",
                     ],
                     Resource: [
-                        `arn:${partition}:elasticloadbalancing:*:*:targetgroup/*/*`,
-                        `arn:${partition}:elasticloadbalancing:*:*:loadbalancer/net/*/*`,
-                        `arn:${partition}:elasticloadbalancing:*:*:loadbalancer/app/*/*`,
+                        `arn:aws:elasticloadbalancing:*:*:targetgroup/*/*`,
+                        `arn:aws:elasticloadbalancing:*:*:loadbalancer/net/*/*`,
+                        `arn:aws:elasticloadbalancing:*:*:loadbalancer/app/*/*`,
                     ],
                     Condition: {
                         StringEquals: {
@@ -344,10 +321,10 @@ const albControllerPolicyDoc = pulumi
                         "elasticloadbalancing:RemoveTags",
                     ],
                     Resource: [
-                        `arn:${partition}:elasticloadbalancing:*:*:listener/net/*/*/*`,
-                        `arn:${partition}:elasticloadbalancing:*:*:listener/app/*/*/*`,
-                        `arn:${partition}:elasticloadbalancing:*:*:listener-rule/net/*/*/*`,
-                        `arn:${partition}:elasticloadbalancing:*:*:listener-rule/app/*/*/*`,
+                        `arn:aws:elasticloadbalancing:*:*:listener/net/*/*/*`,
+                        `arn:aws:elasticloadbalancing:*:*:listener/app/*/*/*`,
+                        `arn:aws:elasticloadbalancing:*:*:listener-rule/net/*/*/*`,
+                        `arn:aws:elasticloadbalancing:*:*:listener-rule/app/*/*/*`,
                     ],
                     Condition: {
                         StringEquals: {
@@ -387,9 +364,9 @@ const albControllerPolicyDoc = pulumi
                     Effect: "Allow",
                     Action: ["elasticloadbalancing:AddTags"],
                     Resource: [
-                        `arn:${partition}:elasticloadbalancing:*:*:targetgroup/*/*`,
-                        `arn:${partition}:elasticloadbalancing:*:*:loadbalancer/net/*/*`,
-                        `arn:${partition}:elasticloadbalancing:*:*:loadbalancer/app/*/*`,
+                        `arn:aws:elasticloadbalancing:*:*:targetgroup/*/*`,
+                        `arn:aws:elasticloadbalancing:*:*:loadbalancer/net/*/*`,
+                        `arn:aws:elasticloadbalancing:*:*:loadbalancer/app/*/*`,
                     ],
                     Condition: {
                         StringEquals: {
@@ -409,7 +386,7 @@ const albControllerPolicyDoc = pulumi
                         "elasticloadbalancing:DeregisterTargets",
                     ],
                     Resource:
-                        `arn:${partition}:elasticloadbalancing:*:*:targetgroup/*/*`,
+                        `arn:aws:elasticloadbalancing:*:*:targetgroup/*/*`,
                     Condition: {
                         StringEquals: {
                             "aws:ResourceTag/elbv2.k8s.aws/cluster": cluster,
@@ -513,7 +490,7 @@ const efsCsiPolicyDoc = pulumi
     .all([region, accountId, clusterName])
     .apply(([reg, acct, cluster]) => {
         const accessPointArn =
-            `arn:${partition}:elasticfilesystem:${reg}:${acct}:access-point/*`;
+            `arn:aws:elasticfilesystem:${reg}:${acct}:access-point/*`;
         return JSON.stringify({
             Version: "2012-10-17",
             Statement: [
@@ -604,7 +581,7 @@ const externalSecretsPolicyDoc = pulumi
     .apply(([reg, acct]) => {
         const secretArns = externalSecretsAllowedSecretArns.length > 0
             ? externalSecretsAllowedSecretArns
-            : [`arn:${partition}:secretsmanager:${reg}:${acct}:secret:${prefix}-*`];
+            : [`arn:aws:secretsmanager:${reg}:${acct}:secret:${prefix}-*`];
         return JSON.stringify({
             Version: "2012-10-17",
             Statement: [
@@ -620,7 +597,7 @@ const externalSecretsPolicyDoc = pulumi
                     Effect: "Allow",
                     Action: ["kms:Decrypt"],
                     Resource:
-                        `arn:${partition}:kms:${reg}:${acct}:alias/aws/secretsmanager`,
+                        `arn:aws:kms:${reg}:${acct}:alias/aws/secretsmanager`,
                 },
             ],
         });
@@ -668,15 +645,28 @@ new aws.iam.RolePolicyAttachment(`${prefix}-fluent-bit-attach`, {
 // declared in this file (below), nodegroup.ts must import from iam.ts —
 // importing back from nodegroup.ts here would close the cycle.
 
-const karpenterRole = podIdentityRole("karpenter-controller");
+// Pod Identity trust: pods.eks.amazonaws.com with sts:AssumeRole + sts:TagSession
+// (TagSession is required to carry the cluster/namespace/SA tags that the
+// Pod Identity agent injects into the assumed session).
+const karpenterRole = new aws.iam.Role(`${prefix}-karpenter-controller-role`, {
+    name: `${prefix}-karpenter-controller-role`,
+    assumeRolePolicy: JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [{
+            Effect: "Allow",
+            Principal: { Service: "pods.eks.amazonaws.com" },
+            Action: ["sts:AssumeRole", "sts:TagSession"],
+        }],
+    }),
+});
 
 const karpenterControllerPolicyDoc = pulumi
     .all([region, accountId, clusterName])
     .apply(([reg, acct, cluster]) => {
         const nodeArn =
-            `arn:${partition}:iam::${acct}:role/${prefix}-node-role`;
+            `arn:aws:iam::${acct}:role/${prefix}-node-role`;
         const interruptionQueueArn =
-            `arn:${partition}:sqs:${reg}:${acct}:${prefix}-karpenter-interruption`;
+            `arn:aws:sqs:${reg}:${acct}:${prefix}-karpenter-interruption`;
         return JSON.stringify({
             Version: "2012-10-17",
             Statement: [
@@ -684,19 +674,19 @@ const karpenterControllerPolicyDoc = pulumi
                     Sid: "AllowScopedEC2InstanceAccessActions",
                     Effect: "Allow",
                     Resource: [
-                        `arn:${partition}:ec2:${reg}::image/*`,
-                        `arn:${partition}:ec2:${reg}::snapshot/*`,
-                        `arn:${partition}:ec2:${reg}:*:security-group/*`,
-                        `arn:${partition}:ec2:${reg}:*:subnet/*`,
-                        `arn:${partition}:ec2:${reg}:*:capacity-reservation/*`,
-                        `arn:${partition}:ec2:${reg}:*:placement-group/*`,
+                        `arn:aws:ec2:${reg}::image/*`,
+                        `arn:aws:ec2:${reg}::snapshot/*`,
+                        `arn:aws:ec2:${reg}:*:security-group/*`,
+                        `arn:aws:ec2:${reg}:*:subnet/*`,
+                        `arn:aws:ec2:${reg}:*:capacity-reservation/*`,
+                        `arn:aws:ec2:${reg}:*:placement-group/*`,
                     ],
                     Action: ["ec2:RunInstances", "ec2:CreateFleet"],
                 },
                 {
                     Sid: "AllowScopedEC2LaunchTemplateAccessActions",
                     Effect: "Allow",
-                    Resource: `arn:${partition}:ec2:${reg}:*:launch-template/*`,
+                    Resource: `arn:aws:ec2:${reg}:*:launch-template/*`,
                     Action: ["ec2:RunInstances", "ec2:CreateFleet"],
                     Condition: {
                         StringEquals: {
@@ -711,12 +701,12 @@ const karpenterControllerPolicyDoc = pulumi
                     Sid: "AllowScopedEC2InstanceActionsWithTags",
                     Effect: "Allow",
                     Resource: [
-                        `arn:${partition}:ec2:${reg}:*:fleet/*`,
-                        `arn:${partition}:ec2:${reg}:*:instance/*`,
-                        `arn:${partition}:ec2:${reg}:*:volume/*`,
-                        `arn:${partition}:ec2:${reg}:*:network-interface/*`,
-                        `arn:${partition}:ec2:${reg}:*:launch-template/*`,
-                        `arn:${partition}:ec2:${reg}:*:spot-instances-request/*`,
+                        `arn:aws:ec2:${reg}:*:fleet/*`,
+                        `arn:aws:ec2:${reg}:*:instance/*`,
+                        `arn:aws:ec2:${reg}:*:volume/*`,
+                        `arn:aws:ec2:${reg}:*:network-interface/*`,
+                        `arn:aws:ec2:${reg}:*:launch-template/*`,
+                        `arn:aws:ec2:${reg}:*:spot-instances-request/*`,
                     ],
                     Action: [
                         "ec2:RunInstances",
@@ -737,12 +727,12 @@ const karpenterControllerPolicyDoc = pulumi
                     Sid: "AllowScopedResourceCreationTagging",
                     Effect: "Allow",
                     Resource: [
-                        `arn:${partition}:ec2:${reg}:*:fleet/*`,
-                        `arn:${partition}:ec2:${reg}:*:instance/*`,
-                        `arn:${partition}:ec2:${reg}:*:volume/*`,
-                        `arn:${partition}:ec2:${reg}:*:network-interface/*`,
-                        `arn:${partition}:ec2:${reg}:*:launch-template/*`,
-                        `arn:${partition}:ec2:${reg}:*:spot-instances-request/*`,
+                        `arn:aws:ec2:${reg}:*:fleet/*`,
+                        `arn:aws:ec2:${reg}:*:instance/*`,
+                        `arn:aws:ec2:${reg}:*:volume/*`,
+                        `arn:aws:ec2:${reg}:*:network-interface/*`,
+                        `arn:aws:ec2:${reg}:*:launch-template/*`,
+                        `arn:aws:ec2:${reg}:*:spot-instances-request/*`,
                     ],
                     Action: "ec2:CreateTags",
                     Condition: {
@@ -763,7 +753,7 @@ const karpenterControllerPolicyDoc = pulumi
                 {
                     Sid: "AllowScopedResourceTagging",
                     Effect: "Allow",
-                    Resource: `arn:${partition}:ec2:${reg}:*:instance/*`,
+                    Resource: `arn:aws:ec2:${reg}:*:instance/*`,
                     Action: "ec2:CreateTags",
                     Condition: {
                         StringEquals: {
@@ -788,8 +778,8 @@ const karpenterControllerPolicyDoc = pulumi
                     Sid: "AllowScopedDeletion",
                     Effect: "Allow",
                     Resource: [
-                        `arn:${partition}:ec2:${reg}:*:instance/*`,
-                        `arn:${partition}:ec2:${reg}:*:launch-template/*`,
+                        `arn:aws:ec2:${reg}:*:instance/*`,
+                        `arn:aws:ec2:${reg}:*:launch-template/*`,
                     ],
                     Action: [
                         "ec2:TerminateInstances",
@@ -835,8 +825,8 @@ const karpenterControllerPolicyDoc = pulumi
                     Sid: "AllowSSMReadActions",
                     Effect: "Allow",
                     Resource: [
-                        `arn:${partition}:ssm:${reg}::parameter/aws/service/eks/optimized-ami/*`,
-                        `arn:${partition}:ssm:${reg}::parameter/aws/service/bottlerocket/aws-k8s-*`,
+                        `arn:aws:ssm:${reg}::parameter/aws/service/eks/optimized-ami/*`,
+                        `arn:aws:ssm:${reg}::parameter/aws/service/bottlerocket/aws-k8s-*`,
                     ],
                     Action: "ssm:GetParameter",
                 },
@@ -873,7 +863,7 @@ const karpenterControllerPolicyDoc = pulumi
                 {
                     Sid: "AllowScopedInstanceProfileCreationActions",
                     Effect: "Allow",
-                    Resource: `arn:${partition}:iam::${acct}:instance-profile/*`,
+                    Resource: `arn:aws:iam::${acct}:instance-profile/*`,
                     Action: ["iam:CreateInstanceProfile"],
                     Condition: {
                         StringEquals: {
@@ -889,7 +879,7 @@ const karpenterControllerPolicyDoc = pulumi
                 {
                     Sid: "AllowScopedInstanceProfileTagActions",
                     Effect: "Allow",
-                    Resource: `arn:${partition}:iam::${acct}:instance-profile/*`,
+                    Resource: `arn:aws:iam::${acct}:instance-profile/*`,
                     Action: ["iam:TagInstanceProfile"],
                     Condition: {
                         StringEquals: {
@@ -908,7 +898,7 @@ const karpenterControllerPolicyDoc = pulumi
                 {
                     Sid: "AllowScopedInstanceProfileActions",
                     Effect: "Allow",
-                    Resource: `arn:${partition}:iam::${acct}:instance-profile/*`,
+                    Resource: `arn:aws:iam::${acct}:instance-profile/*`,
                     Action: [
                         "iam:AddRoleToInstanceProfile",
                         "iam:RemoveRoleFromInstanceProfile",
@@ -927,7 +917,7 @@ const karpenterControllerPolicyDoc = pulumi
                 {
                     Sid: "AllowInstanceProfileReadActions",
                     Effect: "Allow",
-                    Resource: `arn:${partition}:iam::${acct}:instance-profile/*`,
+                    Resource: `arn:aws:iam::${acct}:instance-profile/*`,
                     Action: "iam:GetInstanceProfile",
                 },
                 {
@@ -939,7 +929,7 @@ const karpenterControllerPolicyDoc = pulumi
                 {
                     Sid: "AllowAPIServerEndpointDiscovery",
                     Effect: "Allow",
-                    Resource: `arn:${partition}:eks:${reg}:${acct}:cluster/${cluster}`,
+                    Resource: `arn:aws:eks:${reg}:${acct}:cluster/${cluster}`,
                     Action: "eks:DescribeCluster",
                 },
             ],

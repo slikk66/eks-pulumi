@@ -178,4 +178,3 @@ export const vpcId: pulumi.Output<string> = vpc.id;
 export const vpcCidrBlock: pulumi.Output<string> = vpc.cidrBlock;
 export const publicSubnetIds: pulumi.Output<string[]> = pulumi.all(publicSubnets.map(s => s.id));
 export const privateSubnetIds: pulumi.Output<string[]> = pulumi.all(privateSubnets.map(s => s.id));
-export const availabilityZones: pulumi.Output<string[]> = azNames;

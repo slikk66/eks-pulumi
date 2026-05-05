@@ -99,7 +99,7 @@ const ns = new k8s.core.v1.Namespace(`${prefix}-argocd-ns`, {
 //   https://artifacthub.io/packages/helm/argo/argo-cd
 //   https://github.com/argoproj/argo-helm/releases
 
-export const argocdRelease = new k8s.helm.v3.Release(`${prefix}-argocd`, {
+const argocdRelease = new k8s.helm.v3.Release(`${prefix}-argocd`, {
     chart: "argo-cd",
     version: "9.5.11",
     namespace: ns.metadata.name,
@@ -119,7 +119,7 @@ export const argocdRelease = new k8s.helm.v3.Release(`${prefix}-argocd`, {
     },
 }, {
     provider: k8sProvider,
-    customTimeouts: { create: "30m", update: "20m" },
+    customTimeouts: { create: "10m", update: "5m" },
     dependsOn: [cluster, vpcCniAddon, podIdentityAgentAddon, nodeGroup],
 });
 

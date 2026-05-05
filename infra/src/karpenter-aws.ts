@@ -123,4 +123,3 @@ new aws.eks.PodIdentityAssociation(`${prefix}-karpenter-pi`, {
 // Exports -------------------------------------------------------------------
 
 export const interruptionQueueName: pulumi.Output<string> = interruptionQueue.name;
-export const interruptionQueueArn: pulumi.Output<string> = interruptionQueue.arn;

@@ -40,20 +40,17 @@ export const nodeRole = new aws.iam.Role(`${prefix}-node-role`, {
 // AmazonEKS_CNI_Policy intentionally absent: VPC-CNI uses IRSA via
 // `kube-system/aws-node` (role declared in iam.ts). Attaching it here would
 // expose ENI-mutating creds to every pod via the IMDS endpoint.
-const nodeManagedPolicies = [
-    "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy",
-    "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly",
+const nodeManagedPolicies: { suffix: string; arn: string }[] = [
+    { suffix: "eks-worker", arn: "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy" },
+    { suffix: "ecr-ro", arn: "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly" },
 ];
 
 const nodePolicyAttachments = nodeManagedPolicies.map(
-    policyArn =>
-        new aws.iam.RolePolicyAttachment(
-            `${prefix}-node-${policyArn.split("/").pop()}`,
-            {
-                role: nodeRole.name,
-                policyArn,
-            },
-        ),
+    p =>
+        new aws.iam.RolePolicyAttachment(`${prefix}-node-${p.suffix}`, {
+            role: nodeRole.name,
+            policyArn: p.arn,
+        }),
 );
 
 export const nodeRoleArn: pulumi.Output<string> = nodeRole.arn;
