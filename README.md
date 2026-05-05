@@ -94,7 +94,7 @@ Stack name is `main` (not `stage` / `prod`) — this is a base, not an environme
 | Mode | Worker placement | Outbound | Extra cost | When |
 |---|---|---|---:|---|
 | `enableNat: false` (default) | Public subnets, public IPs, locked-down SG | Direct | $0 | Learning, dev, cost-sensitive |
-| `enableNat: true` | Private subnets | Multi-AZ NAT (one per AZ) | ~$96/mo + data | Anything resembling prod |
+| `enableNat: true` | Private subnets | Multi-AZ NAT (one per AZ) | ~$98/mo + data | Anything resembling prod |
 
 Default-off is safe: SGs deny all inbound except node-to-node and cluster-API; no NodePort services; cluster API itself is VPN-only. Public IPs on workers are not a vulnerability when the SG is correct.
 
