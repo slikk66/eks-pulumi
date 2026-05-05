@@ -22,7 +22,7 @@ Minimal Pulumi (TypeScript) bootstrap for an Amazon EKS cluster. Creates only th
 | Addons (managed, auto-versioned) | vpc-cni, kube-proxy, coredns, eks-pod-identity-agent |
 | Compute | One 2-node Bottlerocket managed group (m7a.large, `CriticalAddonsOnly` taint) — hosts ArgoCD + Karpenter controller only |
 | IAM | Pod Identity / IRSA roles for Karpenter, AWS LB Controller, External Secrets, Fluent Bit |
-| Karpenter prereqs | SQS interruption queue, EventBridge rules, controller + node IAM, instance profile |
+| Karpenter prereqs | SQS interruption queue, EventBridge rules, controller + node IAM (Karpenter v1 creates instance profiles dynamically) |
 | Remote access | AWS Client VPN, mTLS, Pulumi-generated PKI, ACM-uploaded |
 | GitOps seed | ArgoCD Helm chart, GitOps-Bridge cluster-secret, root `Application` CR |
 

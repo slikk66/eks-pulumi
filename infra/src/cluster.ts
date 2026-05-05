@@ -119,6 +119,11 @@ export const cluster = new aws.eks.Cluster(`${prefix}-cluster`, {
 // validates with its own trusted root CAs and ignores any configured
 // thumbprints.
 // https://repost.aws/questions/QUqnijJ8BxSFOUgUeW8fg-Fg/oidc-provider-thumbprints-optional
+//
+// Fallback: if AWS ever rejects `[]` at apply time, supply the current Amazon
+// Root CA 1 thumbprint (verify at apply time — rotates):
+// `openssl s_client -showcerts -connect <oidc-issuer-host>:443 < /dev/null 2>&1 | \
+//   openssl x509 -fingerprint -sha1 -noout | sed 's/://g; s/.*=//' | tr A-Z a-z`
 
 export const oidcProvider = new aws.iam.OpenIdConnectProvider(
     `${prefix}-oidc`,
