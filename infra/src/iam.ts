@@ -25,6 +25,7 @@ import {
 } from "../pulumi.config";
 import { oidcProvider, clusterName } from "./cluster";
 import { nodeRoleArn } from "./nodegroup";
+import { vpcId } from "./vpc";
 
 const accountId = aws.getCallerIdentityOutput().accountId;
 const partition = "aws";
@@ -92,237 +93,335 @@ function podIdentityRole(name: string): aws.iam.Role {
 
 // ALB Controller -------------------------------------------------------------
 //
-// Policy fetched at IMPLEMENT time (2026-05-05) from kubernetes-sigs upstream:
-// https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/main/docs/install/iam_policy.json
+// Base policy fetched at IMPLEMENT time (2026-05-05) from kubernetes-sigs
+// upstream:
+//   https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/main/docs/install/iam_policy.json
+//
+// Tightenings vs upstream (defense-in-depth, single-cluster stack):
+//   - SLR Resource narrowed to elasticloadbalancing service-role path.
+//   - SG Authorize/Revoke/Create fallbacks bound to this VPC via ec2:Vpc.
+//   - Mutating ELB actions (CreateLB/CreateTG, listener-rule Delete, AddTags
+//     on listener/listener-rule, RegisterTargets, Modify*/Set*) bound to
+//     aws:ResourceTag/elbv2.k8s.aws/cluster = ${clusterName} (was Null:false
+//     or unscoped). CreateListener/CreateRule remain unscoped — child ARN
+//     does not exist at request time.
+//   - EC2/ELBv2 Describe* and ACM/IAM/WAF/Shield/Cognito lookups keep
+//     Resource:"*" because per the AWS Service Authorization Reference
+//     these actions do not support resource-level permissions.
 
-const albControllerPolicyDoc = {
-    Version: "2012-10-17",
-    Statement: [
-        {
-            Effect: "Allow",
-            Action: ["iam:CreateServiceLinkedRole"],
-            Resource: "*",
-            Condition: {
-                StringEquals: {
-                    "iam:AWSServiceName": "elasticloadbalancing.amazonaws.com",
+const albControllerPolicyDoc = pulumi
+    .all([clusterName, vpcId, region, accountId])
+    .apply(([cluster, vpc, reg, acct]) => {
+        const vpcArn = `arn:${partition}:ec2:${reg}:${acct}:vpc/${vpc}`;
+        return JSON.stringify({
+            Version: "2012-10-17",
+            Statement: [
+                {
+                    Effect: "Allow",
+                    Action: ["iam:CreateServiceLinkedRole"],
+                    Resource:
+                        `arn:${partition}:iam::*:role/aws-service-role/elasticloadbalancing.amazonaws.com/*`,
+                    Condition: {
+                        StringEquals: {
+                            "iam:AWSServiceName":
+                                "elasticloadbalancing.amazonaws.com",
+                        },
+                    },
                 },
-            },
-        },
-        {
-            Effect: "Allow",
-            Action: [
-                "ec2:DescribeAccountAttributes",
-                "ec2:DescribeAddresses",
-                "ec2:DescribeAvailabilityZones",
-                "ec2:DescribeInternetGateways",
-                "ec2:DescribeVpcs",
-                "ec2:DescribeVpcPeeringConnections",
-                "ec2:DescribeSubnets",
-                "ec2:DescribeSecurityGroups",
-                "ec2:DescribeInstances",
-                "ec2:DescribeNetworkInterfaces",
-                "ec2:DescribeTags",
-                "ec2:GetCoipPoolUsage",
-                "ec2:DescribeCoipPools",
-                "ec2:GetSecurityGroupsForVpc",
-                "ec2:DescribeIpamPools",
-                "ec2:DescribeRouteTables",
-                "elasticloadbalancing:DescribeLoadBalancers",
-                "elasticloadbalancing:DescribeLoadBalancerAttributes",
-                "elasticloadbalancing:DescribeListeners",
-                "elasticloadbalancing:DescribeListenerCertificates",
-                "elasticloadbalancing:DescribeSSLPolicies",
-                "elasticloadbalancing:DescribeRules",
-                "elasticloadbalancing:DescribeTargetGroups",
-                "elasticloadbalancing:DescribeTargetGroupAttributes",
-                "elasticloadbalancing:DescribeTargetHealth",
-                "elasticloadbalancing:DescribeTags",
-                "elasticloadbalancing:DescribeTrustStores",
-                "elasticloadbalancing:DescribeListenerAttributes",
-                "elasticloadbalancing:DescribeCapacityReservation",
-            ],
-            Resource: "*",
-        },
-        {
-            Effect: "Allow",
-            Action: [
-                "cognito-idp:DescribeUserPoolClient",
-                "acm:ListCertificates",
-                "acm:DescribeCertificate",
-                "iam:ListServerCertificates",
-                "iam:GetServerCertificate",
-                "waf-regional:GetWebACL",
-                "waf-regional:GetWebACLForResource",
-                "waf-regional:AssociateWebACL",
-                "waf-regional:DisassociateWebACL",
-                "wafv2:GetWebACL",
-                "wafv2:GetWebACLForResource",
-                "wafv2:AssociateWebACL",
-                "wafv2:DisassociateWebACL",
-                "shield:GetSubscriptionState",
-                "shield:DescribeProtection",
-                "shield:CreateProtection",
-                "shield:DeleteProtection",
-            ],
-            Resource: "*",
-        },
-        {
-            Effect: "Allow",
-            Action: [
-                "ec2:AuthorizeSecurityGroupIngress",
-                "ec2:RevokeSecurityGroupIngress",
-            ],
-            Resource: "*",
-        },
-        {
-            Effect: "Allow",
-            Action: ["ec2:CreateSecurityGroup"],
-            Resource: "*",
-        },
-        {
-            Effect: "Allow",
-            Action: ["ec2:CreateTags"],
-            Resource: "arn:aws:ec2:*:*:security-group/*",
-            Condition: {
-                StringEquals: { "ec2:CreateAction": "CreateSecurityGroup" },
-                Null: { "aws:RequestTag/elbv2.k8s.aws/cluster": "false" },
-            },
-        },
-        {
-            Effect: "Allow",
-            Action: ["ec2:CreateTags", "ec2:DeleteTags"],
-            Resource: "arn:aws:ec2:*:*:security-group/*",
-            Condition: {
-                Null: {
-                    "aws:RequestTag/elbv2.k8s.aws/cluster": "true",
-                    "aws:ResourceTag/elbv2.k8s.aws/cluster": "false",
-                },
-            },
-        },
-        {
-            Effect: "Allow",
-            Action: [
-                "ec2:AuthorizeSecurityGroupIngress",
-                "ec2:RevokeSecurityGroupIngress",
-                "ec2:DeleteSecurityGroup",
-            ],
-            Resource: "*",
-            Condition: {
-                Null: { "aws:ResourceTag/elbv2.k8s.aws/cluster": "false" },
-            },
-        },
-        {
-            Effect: "Allow",
-            Action: [
-                "elasticloadbalancing:CreateLoadBalancer",
-                "elasticloadbalancing:CreateTargetGroup",
-            ],
-            Resource: "*",
-            Condition: {
-                Null: { "aws:RequestTag/elbv2.k8s.aws/cluster": "false" },
-            },
-        },
-        {
-            Effect: "Allow",
-            Action: [
-                "elasticloadbalancing:CreateListener",
-                "elasticloadbalancing:DeleteListener",
-                "elasticloadbalancing:CreateRule",
-                "elasticloadbalancing:DeleteRule",
-            ],
-            Resource: "*",
-        },
-        {
-            Effect: "Allow",
-            Action: [
-                "elasticloadbalancing:AddTags",
-                "elasticloadbalancing:RemoveTags",
-            ],
-            Resource: [
-                "arn:aws:elasticloadbalancing:*:*:targetgroup/*/*",
-                "arn:aws:elasticloadbalancing:*:*:loadbalancer/net/*/*",
-                "arn:aws:elasticloadbalancing:*:*:loadbalancer/app/*/*",
-            ],
-            Condition: {
-                Null: {
-                    "aws:RequestTag/elbv2.k8s.aws/cluster": "true",
-                    "aws:ResourceTag/elbv2.k8s.aws/cluster": "false",
-                },
-            },
-        },
-        {
-            Effect: "Allow",
-            Action: [
-                "elasticloadbalancing:AddTags",
-                "elasticloadbalancing:RemoveTags",
-            ],
-            Resource: [
-                "arn:aws:elasticloadbalancing:*:*:listener/net/*/*/*",
-                "arn:aws:elasticloadbalancing:*:*:listener/app/*/*/*",
-                "arn:aws:elasticloadbalancing:*:*:listener-rule/net/*/*/*",
-                "arn:aws:elasticloadbalancing:*:*:listener-rule/app/*/*/*",
-            ],
-        },
-        {
-            Effect: "Allow",
-            Action: [
-                "elasticloadbalancing:ModifyLoadBalancerAttributes",
-                "elasticloadbalancing:SetIpAddressType",
-                "elasticloadbalancing:SetSecurityGroups",
-                "elasticloadbalancing:SetSubnets",
-                "elasticloadbalancing:DeleteLoadBalancer",
-                "elasticloadbalancing:ModifyTargetGroup",
-                "elasticloadbalancing:ModifyTargetGroupAttributes",
-                "elasticloadbalancing:DeleteTargetGroup",
-                "elasticloadbalancing:ModifyListenerAttributes",
-                "elasticloadbalancing:ModifyCapacityReservation",
-                "elasticloadbalancing:ModifyIpPools",
-            ],
-            Resource: "*",
-            Condition: {
-                Null: { "aws:ResourceTag/elbv2.k8s.aws/cluster": "false" },
-            },
-        },
-        {
-            Effect: "Allow",
-            Action: ["elasticloadbalancing:AddTags"],
-            Resource: [
-                "arn:aws:elasticloadbalancing:*:*:targetgroup/*/*",
-                "arn:aws:elasticloadbalancing:*:*:loadbalancer/net/*/*",
-                "arn:aws:elasticloadbalancing:*:*:loadbalancer/app/*/*",
-            ],
-            Condition: {
-                StringEquals: {
-                    "elasticloadbalancing:CreateAction": [
-                        "CreateTargetGroup",
-                        "CreateLoadBalancer",
+                {
+                    // Resource:"*" required — EC2/ELBv2 Describe* lack
+                    // resource-level perms per AWS docs.
+                    Effect: "Allow",
+                    Action: [
+                        "ec2:DescribeAccountAttributes",
+                        "ec2:DescribeAddresses",
+                        "ec2:DescribeAvailabilityZones",
+                        "ec2:DescribeInternetGateways",
+                        "ec2:DescribeVpcs",
+                        "ec2:DescribeVpcPeeringConnections",
+                        "ec2:DescribeSubnets",
+                        "ec2:DescribeSecurityGroups",
+                        "ec2:DescribeInstances",
+                        "ec2:DescribeNetworkInterfaces",
+                        "ec2:DescribeTags",
+                        "ec2:GetCoipPoolUsage",
+                        "ec2:DescribeCoipPools",
+                        "ec2:GetSecurityGroupsForVpc",
+                        "ec2:DescribeIpamPools",
+                        "ec2:DescribeRouteTables",
+                        "elasticloadbalancing:DescribeLoadBalancers",
+                        "elasticloadbalancing:DescribeLoadBalancerAttributes",
+                        "elasticloadbalancing:DescribeListeners",
+                        "elasticloadbalancing:DescribeListenerCertificates",
+                        "elasticloadbalancing:DescribeSSLPolicies",
+                        "elasticloadbalancing:DescribeRules",
+                        "elasticloadbalancing:DescribeTargetGroups",
+                        "elasticloadbalancing:DescribeTargetGroupAttributes",
+                        "elasticloadbalancing:DescribeTargetHealth",
+                        "elasticloadbalancing:DescribeTags",
+                        "elasticloadbalancing:DescribeTrustStores",
+                        "elasticloadbalancing:DescribeListenerAttributes",
+                        "elasticloadbalancing:DescribeCapacityReservation",
                     ],
+                    Resource: "*",
                 },
-                Null: { "aws:RequestTag/elbv2.k8s.aws/cluster": "false" },
-            },
-        },
-        {
-            Effect: "Allow",
-            Action: [
-                "elasticloadbalancing:RegisterTargets",
-                "elasticloadbalancing:DeregisterTargets",
+                {
+                    // Resource:"*" required — ACM/IAM cert listing, WAF
+                    // lookup-for-resource, Shield subscription state, Cognito
+                    // user-pool describe lack resource-level perms or operate
+                    // on user-supplied ARNs not enumerable at policy-write
+                    // time.
+                    Effect: "Allow",
+                    Action: [
+                        "cognito-idp:DescribeUserPoolClient",
+                        "acm:ListCertificates",
+                        "acm:DescribeCertificate",
+                        "iam:ListServerCertificates",
+                        "iam:GetServerCertificate",
+                        "waf-regional:GetWebACL",
+                        "waf-regional:GetWebACLForResource",
+                        "waf-regional:AssociateWebACL",
+                        "waf-regional:DisassociateWebACL",
+                        "wafv2:GetWebACL",
+                        "wafv2:GetWebACLForResource",
+                        "wafv2:AssociateWebACL",
+                        "wafv2:DisassociateWebACL",
+                        "shield:GetSubscriptionState",
+                        "shield:DescribeProtection",
+                        "shield:CreateProtection",
+                        "shield:DeleteProtection",
+                    ],
+                    Resource: "*",
+                },
+                {
+                    // Bound to this VPC; closes cross-VPC blast radius.
+                    Effect: "Allow",
+                    Action: [
+                        "ec2:AuthorizeSecurityGroupIngress",
+                        "ec2:RevokeSecurityGroupIngress",
+                    ],
+                    Resource: "*",
+                    Condition: {
+                        ArnEquals: { "ec2:Vpc": vpcArn },
+                    },
+                },
+                {
+                    Effect: "Allow",
+                    Action: ["ec2:CreateSecurityGroup"],
+                    Resource: "*",
+                    Condition: {
+                        ArnEquals: { "ec2:Vpc": vpcArn },
+                    },
+                },
+                {
+                    // RequestTag bound to cluster (was Null:false).
+                    Effect: "Allow",
+                    Action: ["ec2:CreateTags"],
+                    Resource: `arn:${partition}:ec2:*:*:security-group/*`,
+                    Condition: {
+                        StringEquals: {
+                            "ec2:CreateAction": "CreateSecurityGroup",
+                            "aws:RequestTag/elbv2.k8s.aws/cluster": cluster,
+                        },
+                    },
+                },
+                {
+                    // ResourceTag bound to cluster (was Null:false).
+                    Effect: "Allow",
+                    Action: ["ec2:CreateTags", "ec2:DeleteTags"],
+                    Resource: `arn:${partition}:ec2:*:*:security-group/*`,
+                    Condition: {
+                        StringEquals: {
+                            "aws:ResourceTag/elbv2.k8s.aws/cluster": cluster,
+                        },
+                        Null: {
+                            "aws:RequestTag/elbv2.k8s.aws/cluster": "true",
+                        },
+                    },
+                },
+                {
+                    // ResourceTag bound to cluster (was Null:false).
+                    Effect: "Allow",
+                    Action: [
+                        "ec2:AuthorizeSecurityGroupIngress",
+                        "ec2:RevokeSecurityGroupIngress",
+                        "ec2:DeleteSecurityGroup",
+                    ],
+                    Resource: "*",
+                    Condition: {
+                        StringEquals: {
+                            "aws:ResourceTag/elbv2.k8s.aws/cluster": cluster,
+                        },
+                    },
+                },
+                {
+                    // Bound to this cluster's tag value (was Null:false).
+                    Effect: "Allow",
+                    Action: [
+                        "elasticloadbalancing:CreateLoadBalancer",
+                        "elasticloadbalancing:CreateTargetGroup",
+                    ],
+                    Resource: "*",
+                    Condition: {
+                        StringEquals: {
+                            "aws:RequestTag/elbv2.k8s.aws/cluster": cluster,
+                        },
+                    },
+                },
+                {
+                    // Resource:"*" required — child ARN does not exist at
+                    // request time and CreateListener/CreateRule do not
+                    // accept tag-on-create. AddTags via Statement 14.
+                    Effect: "Allow",
+                    Action: [
+                        "elasticloadbalancing:CreateListener",
+                        "elasticloadbalancing:CreateRule",
+                    ],
+                    Resource: "*",
+                },
+                {
+                    // Delete listener / rule scoped to listener and listener-
+                    // rule ARNs with cluster-tag condition.
+                    Effect: "Allow",
+                    Action: [
+                        "elasticloadbalancing:DeleteListener",
+                        "elasticloadbalancing:DeleteRule",
+                    ],
+                    Resource: [
+                        `arn:${partition}:elasticloadbalancing:*:*:listener/net/*/*/*`,
+                        `arn:${partition}:elasticloadbalancing:*:*:listener/app/*/*/*`,
+                        `arn:${partition}:elasticloadbalancing:*:*:listener-rule/net/*/*/*`,
+                        `arn:${partition}:elasticloadbalancing:*:*:listener-rule/app/*/*/*`,
+                    ],
+                    Condition: {
+                        StringEquals: {
+                            "aws:ResourceTag/elbv2.k8s.aws/cluster": cluster,
+                        },
+                    },
+                },
+                {
+                    // ResourceTag bound to cluster (was Null:false).
+                    Effect: "Allow",
+                    Action: [
+                        "elasticloadbalancing:AddTags",
+                        "elasticloadbalancing:RemoveTags",
+                    ],
+                    Resource: [
+                        `arn:${partition}:elasticloadbalancing:*:*:targetgroup/*/*`,
+                        `arn:${partition}:elasticloadbalancing:*:*:loadbalancer/net/*/*`,
+                        `arn:${partition}:elasticloadbalancing:*:*:loadbalancer/app/*/*`,
+                    ],
+                    Condition: {
+                        StringEquals: {
+                            "aws:ResourceTag/elbv2.k8s.aws/cluster": cluster,
+                        },
+                        Null: {
+                            "aws:RequestTag/elbv2.k8s.aws/cluster": "true",
+                        },
+                    },
+                },
+                {
+                    // Listener / listener-rule AddTags/RemoveTags now bound
+                    // to cluster (was unscoped in upstream).
+                    Effect: "Allow",
+                    Action: [
+                        "elasticloadbalancing:AddTags",
+                        "elasticloadbalancing:RemoveTags",
+                    ],
+                    Resource: [
+                        `arn:${partition}:elasticloadbalancing:*:*:listener/net/*/*/*`,
+                        `arn:${partition}:elasticloadbalancing:*:*:listener/app/*/*/*`,
+                        `arn:${partition}:elasticloadbalancing:*:*:listener-rule/net/*/*/*`,
+                        `arn:${partition}:elasticloadbalancing:*:*:listener-rule/app/*/*/*`,
+                    ],
+                    Condition: {
+                        StringEquals: {
+                            "aws:ResourceTag/elbv2.k8s.aws/cluster": cluster,
+                        },
+                        Null: {
+                            "aws:RequestTag/elbv2.k8s.aws/cluster": "true",
+                        },
+                    },
+                },
+                {
+                    // ResourceTag bound to cluster (was Null:false).
+                    Effect: "Allow",
+                    Action: [
+                        "elasticloadbalancing:ModifyLoadBalancerAttributes",
+                        "elasticloadbalancing:SetIpAddressType",
+                        "elasticloadbalancing:SetSecurityGroups",
+                        "elasticloadbalancing:SetSubnets",
+                        "elasticloadbalancing:DeleteLoadBalancer",
+                        "elasticloadbalancing:ModifyTargetGroup",
+                        "elasticloadbalancing:ModifyTargetGroupAttributes",
+                        "elasticloadbalancing:DeleteTargetGroup",
+                        "elasticloadbalancing:ModifyListenerAttributes",
+                        "elasticloadbalancing:ModifyCapacityReservation",
+                        "elasticloadbalancing:ModifyIpPools",
+                    ],
+                    Resource: "*",
+                    Condition: {
+                        StringEquals: {
+                            "aws:ResourceTag/elbv2.k8s.aws/cluster": cluster,
+                        },
+                    },
+                },
+                {
+                    // RequestTag bound to cluster (was Null:false).
+                    Effect: "Allow",
+                    Action: ["elasticloadbalancing:AddTags"],
+                    Resource: [
+                        `arn:${partition}:elasticloadbalancing:*:*:targetgroup/*/*`,
+                        `arn:${partition}:elasticloadbalancing:*:*:loadbalancer/net/*/*`,
+                        `arn:${partition}:elasticloadbalancing:*:*:loadbalancer/app/*/*`,
+                    ],
+                    Condition: {
+                        StringEquals: {
+                            "elasticloadbalancing:CreateAction": [
+                                "CreateTargetGroup",
+                                "CreateLoadBalancer",
+                            ],
+                            "aws:RequestTag/elbv2.k8s.aws/cluster": cluster,
+                        },
+                    },
+                },
+                {
+                    // Now bound to cluster (was unscoped in upstream).
+                    Effect: "Allow",
+                    Action: [
+                        "elasticloadbalancing:RegisterTargets",
+                        "elasticloadbalancing:DeregisterTargets",
+                    ],
+                    Resource:
+                        `arn:${partition}:elasticloadbalancing:*:*:targetgroup/*/*`,
+                    Condition: {
+                        StringEquals: {
+                            "aws:ResourceTag/elbv2.k8s.aws/cluster": cluster,
+                        },
+                    },
+                },
+                {
+                    // Mixed resource types (LB / listener / listener-rule).
+                    // Constrain by cluster-tag (was unscoped in upstream).
+                    Effect: "Allow",
+                    Action: [
+                        "elasticloadbalancing:SetWebAcl",
+                        "elasticloadbalancing:ModifyListener",
+                        "elasticloadbalancing:AddListenerCertificates",
+                        "elasticloadbalancing:RemoveListenerCertificates",
+                        "elasticloadbalancing:ModifyRule",
+                        "elasticloadbalancing:SetRulePriorities",
+                    ],
+                    Resource: "*",
+                    Condition: {
+                        StringEquals: {
+                            "aws:ResourceTag/elbv2.k8s.aws/cluster": cluster,
+                        },
+                    },
+                },
             ],
-            Resource: "arn:aws:elasticloadbalancing:*:*:targetgroup/*/*",
-        },
-        {
-            Effect: "Allow",
-            Action: [
-                "elasticloadbalancing:SetWebAcl",
-                "elasticloadbalancing:ModifyListener",
-                "elasticloadbalancing:AddListenerCertificates",
-                "elasticloadbalancing:RemoveListenerCertificates",
-                "elasticloadbalancing:ModifyRule",
-                "elasticloadbalancing:SetRulePriorities",
-            ],
-            Resource: "*",
-        },
-    ],
-};
+        });
+    });
 
 const albRole = irsaRole(
     "alb-controller",
@@ -332,7 +431,7 @@ const albRole = irsaRole(
 
 const albPolicy = new aws.iam.Policy(`${prefix}-alb-controller-policy`, {
     name: `${prefix}-alb-controller-policy`,
-    policy: JSON.stringify(albControllerPolicyDoc),
+    policy: albControllerPolicyDoc,
 });
 
 new aws.iam.RolePolicyAttachment(`${prefix}-alb-controller-attach`, {
@@ -358,55 +457,71 @@ new aws.iam.RolePolicyAttachment(`${prefix}-ebs-csi-attach`, {
 });
 
 // EFS CSI --------------------------------------------------------------------
-// Inline policy: describe + access-point lifecycle (tag-scoped to the
-// efs.csi.aws.com/cluster=true tag).
-// https://github.com/kubernetes-sigs/aws-efs-csi-driver/blob/master/docs/iam-policy-example.json
+// Inline policy fetched at IMPLEMENT time (2026-05-05) from kubernetes-sigs:
+//   https://github.com/kubernetes-sigs/aws-efs-csi-driver/blob/master/docs/iam-policy-example.json
+//
+// Tightenings vs upstream:
+//   - TagResource and DeleteAccessPoint Resource narrowed from "*" to the
+//     access-point ARN pattern (the driver only ever tags or deletes
+//     access-points it created).
+//   - Describe* keep Resource:"*" — EFS Describe* lacks resource-level
+//     perms per AWS Service Authorization Reference.
 
-const efsCsiPolicyDoc = {
-    Version: "2012-10-17",
-    Statement: [
-        {
-            Effect: "Allow",
-            Action: [
-                "elasticfilesystem:DescribeAccessPoints",
-                "elasticfilesystem:DescribeFileSystems",
-                "elasticfilesystem:DescribeMountTargets",
-                "ec2:DescribeAvailabilityZones",
+const efsCsiPolicyDoc = pulumi
+    .all([region, accountId])
+    .apply(([reg, acct]) => {
+        const accessPointArn =
+            `arn:${partition}:elasticfilesystem:${reg}:${acct}:access-point/*`;
+        return JSON.stringify({
+            Version: "2012-10-17",
+            Statement: [
+                {
+                    // Resource:"*" required — EFS Describe* and EC2
+                    // DescribeAvailabilityZones lack resource-level perms.
+                    Effect: "Allow",
+                    Action: [
+                        "elasticfilesystem:DescribeAccessPoints",
+                        "elasticfilesystem:DescribeFileSystems",
+                        "elasticfilesystem:DescribeMountTargets",
+                        "ec2:DescribeAvailabilityZones",
+                    ],
+                    Resource: "*",
+                },
+                {
+                    // Resource:"*" required — access-point ARN does not exist
+                    // at request time. Tag-on-create scoped via RequestTag.
+                    Effect: "Allow",
+                    Action: ["elasticfilesystem:CreateAccessPoint"],
+                    Resource: "*",
+                    Condition: {
+                        StringLike: {
+                            "aws:RequestTag/efs.csi.aws.com/cluster": "true",
+                        },
+                    },
+                },
+                {
+                    Effect: "Allow",
+                    Action: ["elasticfilesystem:TagResource"],
+                    Resource: accessPointArn,
+                    Condition: {
+                        StringLike: {
+                            "aws:ResourceTag/efs.csi.aws.com/cluster": "true",
+                        },
+                    },
+                },
+                {
+                    Effect: "Allow",
+                    Action: "elasticfilesystem:DeleteAccessPoint",
+                    Resource: accessPointArn,
+                    Condition: {
+                        StringEquals: {
+                            "aws:ResourceTag/efs.csi.aws.com/cluster": "true",
+                        },
+                    },
+                },
             ],
-            Resource: "*",
-        },
-        {
-            Effect: "Allow",
-            Action: ["elasticfilesystem:CreateAccessPoint"],
-            Resource: "*",
-            Condition: {
-                StringLike: {
-                    "aws:RequestTag/efs.csi.aws.com/cluster": "true",
-                },
-            },
-        },
-        {
-            Effect: "Allow",
-            Action: ["elasticfilesystem:TagResource"],
-            Resource: "*",
-            Condition: {
-                StringLike: {
-                    "aws:ResourceTag/efs.csi.aws.com/cluster": "true",
-                },
-            },
-        },
-        {
-            Effect: "Allow",
-            Action: "elasticfilesystem:DeleteAccessPoint",
-            Resource: "*",
-            Condition: {
-                StringEquals: {
-                    "aws:ResourceTag/efs.csi.aws.com/cluster": "true",
-                },
-            },
-        },
-    ],
-};
+        });
+    });
 
 const efsRole = irsaRole(
     "efs-csi",
@@ -417,7 +532,7 @@ const efsRole = irsaRole(
 new aws.iam.RolePolicy(`${prefix}-efs-csi-policy`, {
     name: `${prefix}-efs-csi-policy`,
     role: efsRole.name,
-    policy: JSON.stringify(efsCsiPolicyDoc),
+    policy: efsCsiPolicyDoc,
 });
 
 // External Secrets ----------------------------------------------------------
