@@ -19,6 +19,7 @@ import * as aws from "@pulumi/aws";
 import { prefix, enableNat } from "../pulumi.config";
 import { publicSubnetIds, privateSubnetIds } from "./vpc";
 import { cluster } from "./cluster";
+import { vpcCniRoleArn } from "./iam";
 
 // Node IAM role --------------------------------------------------------------
 
@@ -36,10 +37,12 @@ export const nodeRole = new aws.iam.Role(`${prefix}-node-role`, {
     }),
 });
 
+// AmazonEKS_CNI_Policy intentionally absent: VPC-CNI uses IRSA via
+// `kube-system/aws-node` (role declared in iam.ts). Attaching it here would
+// expose ENI-mutating creds to every pod via the IMDS endpoint.
 const nodeManagedPolicies = [
     "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy",
     "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly",
-    "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy",
 ];
 
 const nodePolicyAttachments = nodeManagedPolicies.map(
@@ -102,6 +105,7 @@ export const vpcCniAddon = new aws.eks.Addon(`${prefix}-vpc-cni`, {
     clusterName: cluster.name,
     addonName: "vpc-cni",
     addonVersion: vpcCniVersion.version,
+    serviceAccountRoleArn: vpcCniRoleArn,
     resolveConflictsOnCreate: "OVERWRITE",
     resolveConflictsOnUpdate: "OVERWRITE",
 }, { dependsOn: [nodeGroup] });

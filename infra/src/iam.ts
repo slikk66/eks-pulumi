@@ -2,6 +2,7 @@
 //
 // IRSA roles (OIDC web-identity trust):
 //   - aws-load-balancer-controller          (kube-system)
+//   - aws-node                              (kube-system)        [vpc-cni]
 //   - ebs-csi-controller-sa                 (kube-system)
 //   - efs-csi-controller-sa                 (kube-system)
 //   - external-secrets                      (external-secrets)
@@ -24,7 +25,6 @@ import {
     externalSecretsAllowedSecretArns,
 } from "../pulumi.config";
 import { oidcProvider, clusterName } from "./cluster";
-import { nodeRoleArn } from "./nodegroup";
 import { vpcId } from "./vpc";
 
 const accountId = aws.getCallerIdentityOutput().accountId;
@@ -456,6 +456,23 @@ new aws.iam.RolePolicyAttachment(`${prefix}-ebs-csi-attach`, {
         "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy",
 });
 
+// VPC CNI --------------------------------------------------------------------
+// AWS-managed policy bound to the upstream `kube-system/aws-node` SA via
+// IRSA. Without IRSA the policy lands on the node role and every pod on the
+// node can mutate ENIs via the IMDS credential endpoint.
+// https://docs.aws.amazon.com/eks/latest/userguide/cni-iam-role.html
+
+const vpcCniRole = irsaRole(
+    "vpc-cni",
+    "kube-system",
+    "aws-node",
+);
+
+new aws.iam.RolePolicyAttachment(`${prefix}-vpc-cni-attach`, {
+    role: vpcCniRole.name,
+    policyArn: "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy",
+});
+
 // EFS CSI --------------------------------------------------------------------
 // Inline policy fetched at IMPLEMENT time (2026-05-05) from kubernetes-sigs:
 //   https://github.com/kubernetes-sigs/aws-efs-csi-driver/blob/master/docs/iam-policy-example.json
@@ -617,15 +634,21 @@ new aws.iam.RolePolicyAttachment(`${prefix}-fluent-bit-attach`, {
 // here for brevity. ZonalShift is omitted (the optional zonal-shift
 // integration is not enabled in this stack).
 //
-// The interruption queue ARN is constructed from prefix + region + account
-// rather than imported from karpenter-aws.ts to avoid a circular import.
-// The queue is created with a deterministic name in karpenter-aws.ts.
+// The interruption queue ARN and node role ARN are constructed from
+// prefix + region + account rather than imported from karpenter-aws.ts /
+// nodegroup.ts to avoid circular imports. The queue is created with a
+// deterministic name in karpenter-aws.ts; the node role with a
+// deterministic name in nodegroup.ts. Once vpc-cni's IRSA role is
+// declared in this file (below), nodegroup.ts must import from iam.ts —
+// importing back from nodegroup.ts here would close the cycle.
 
 const karpenterRole = podIdentityRole("karpenter-controller");
 
 const karpenterControllerPolicyDoc = pulumi
-    .all([region, accountId, clusterName, nodeRoleArn])
-    .apply(([reg, acct, cluster, nodeArn]) => {
+    .all([region, accountId, clusterName])
+    .apply(([reg, acct, cluster]) => {
+        const nodeArn =
+            `arn:${partition}:iam::${acct}:role/${prefix}-node-role`;
         const interruptionQueueArn =
             `arn:${partition}:sqs:${reg}:${acct}:${prefix}-karpenter-interruption`;
         return JSON.stringify({
@@ -904,3 +927,4 @@ export const externalSecretsRoleArn: pulumi.Output<string> =
 export const fluentBitRoleArn: pulumi.Output<string> = fluentBitRole.arn;
 export const karpenterControllerRoleArn: pulumi.Output<string> =
     karpenterRole.arn;
+export const vpcCniRoleArn: pulumi.Output<string> = vpcCniRole.arn;
