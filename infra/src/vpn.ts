@@ -17,7 +17,7 @@ import * as pulumi from "@pulumi/pulumi";
 import * as aws from "@pulumi/aws";
 import * as tls from "@pulumi/tls";
 
-import { prefix, clientVpnCidr } from "../pulumi.config";
+import { prefix, clientVpnCidr, vpnHighAvailability } from "../pulumi.config";
 import { vpcId, vpcCidrBlock, privateSubnetIds } from "./vpc";
 
 // CA -------------------------------------------------------------------------
@@ -140,12 +140,26 @@ const endpoint = new aws.ec2clientvpn.Endpoint(`${prefix}-vpn`, {
     vpnPort: 443,
 });
 
-// One subnet association — minimum cost. Using a private subnet keeps VPN
-// traffic on private route tables; the auth rule below opens the whole VPC.
-new aws.ec2clientvpn.NetworkAssociation(`${prefix}-vpn-assoc`, {
-    clientVpnEndpointId: endpoint.id,
-    subnetId: privateSubnetIds.apply(ids => ids[0]),
-});
+// Subnet association(s). Default (vpnHighAvailability=false): one association
+// on privateSubnetIds[0] — minimum cost (~$72/mo). HA mode: one association
+// per private subnet (one per AZ) so a single-AZ outage no longer kills VPN
+// access — adds ~$72/mo per extra association. AWS load-balances connections
+// across the available associations via the endpoint DNS name.
+// https://docs.aws.amazon.com/vpn/latest/clientvpn-admin/cvpn-working-target.html
+if (vpnHighAvailability) {
+    // Hardcoded 3 matches vpc.ts's 3-AZ build.
+    for (let i = 0; i < 3; i++) {
+        new aws.ec2clientvpn.NetworkAssociation(`${prefix}-vpn-assoc-${i}`, {
+            clientVpnEndpointId: endpoint.id,
+            subnetId: privateSubnetIds.apply(ids => ids[i]),
+        });
+    }
+} else {
+    new aws.ec2clientvpn.NetworkAssociation(`${prefix}-vpn-assoc`, {
+        clientVpnEndpointId: endpoint.id,
+        subnetId: privateSubnetIds.apply(ids => ids[0]),
+    });
+}
 
 new aws.ec2clientvpn.AuthorizationRule(`${prefix}-vpn-auth`, {
     clientVpnEndpointId: endpoint.id,

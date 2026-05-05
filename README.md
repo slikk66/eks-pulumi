@@ -177,6 +177,7 @@ eks-pulumi/
 | NAT gateways (3 AZ) | $0 | ~$98/mo + data |
 | S3 state, EIPs, misc | <$5/mo | <$5/mo |
 | **Baseline** | **~$321/mo** | **~$419/mo** |
+| VPN HA (`vpnHighAvailability: true`, +2 subnet assocs) | +~$144/mo | +~$144/mo |
 
 Add the GitOps stack (AMP, AMG, CloudWatch Logs, ALB) on top.
 

@@ -12,6 +12,9 @@ export const enableNat = cfg.getBoolean("enableNat") ?? false;
 
 // Client VPN
 export const clientVpnCidr = cfg.get("clientVpnCidr") ?? "10.100.0.0/22";
+// false (default) = single subnet association (cost-sensitive). true = one
+// association per private subnet (multi-AZ HA, ~$72/mo per extra association).
+export const vpnHighAvailability = cfg.getBoolean("vpnHighAvailability") ?? false;
 
 // EKS access entry
 export const adminRoleArn = cfg.require("adminRoleArn");
