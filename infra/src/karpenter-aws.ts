@@ -101,6 +101,9 @@ for (const r of rules) {
     });
 
     new aws.cloudwatch.EventTarget(`${prefix}-karpenter-${r.name}-target`, {
+        // Explicit targetId; AWS caps at 64 chars and Pulumi's auto-suffix
+        // can push the longer rule names over the limit.
+        targetId: `${prefix}-karpenter-${r.name}-target`,
         rule: rule.name,
         arn: interruptionQueue.arn,
     });
