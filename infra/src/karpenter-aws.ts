@@ -57,26 +57,37 @@ new aws.sqs.QueuePolicy(`${prefix}-karpenter-interruption-policy`, {
 
 // EventBridge rules → SQS target -------------------------------------------
 //
-// Three event sources surface as Karpenter-actionable interruption signals.
+// Four event sources surface as Karpenter-actionable interruption signals.
 // All routed to the same queue so the controller has a single poll loop.
+// Source + detail-type pairs match the v1.12 CF reference verbatim
+// (ScheduledChangeRule, SpotInterruptionRule, RebalanceRule, InstanceStateChangeRule).
 
 interface RuleSpec {
     name: string;
+    source: string;
     detailType: string;
 }
 
 const rules: RuleSpec[] = [
     {
         name: "spot-interruption",
+        source: "aws.ec2",
         detailType: "EC2 Spot Instance Interruption Warning",
     },
     {
         name: "rebalance-recommendation",
+        source: "aws.ec2",
         detailType: "EC2 Instance Rebalance Recommendation",
     },
     {
         name: "instance-state-change",
+        source: "aws.ec2",
         detailType: "EC2 Instance State-change Notification",
+    },
+    {
+        name: "aws-health-event",
+        source: "aws.health",
+        detailType: "AWS Health Event",
     },
 ];
 
@@ -84,7 +95,7 @@ for (const r of rules) {
     const rule = new aws.cloudwatch.EventRule(`${prefix}-karpenter-${r.name}`, {
         name: `${prefix}-karpenter-${r.name}`,
         eventPattern: JSON.stringify({
-            source: ["aws.ec2"],
+            source: [r.source],
             "detail-type": [r.detailType],
         }),
     });
