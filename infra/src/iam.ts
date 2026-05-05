@@ -549,10 +549,14 @@ const efsRole = irsaRole(
     "efs-csi-controller-sa",
 );
 
-new aws.iam.RolePolicy(`${prefix}-efs-csi-policy`, {
+const efsCsiPolicy = new aws.iam.Policy(`${prefix}-efs-csi-policy`, {
     name: `${prefix}-efs-csi-policy`,
-    role: efsRole.name,
     policy: efsCsiPolicyDoc,
+});
+
+new aws.iam.RolePolicyAttachment(`${prefix}-efs-csi-attach`, {
+    role: efsRole.name,
+    policyArn: efsCsiPolicy.arn,
 });
 
 // External Secrets ----------------------------------------------------------
@@ -603,10 +607,14 @@ const externalSecretsPolicyDoc = pulumi
         });
     });
 
-new aws.iam.RolePolicy(`${prefix}-external-secrets-policy`, {
+const externalSecretsPolicy = new aws.iam.Policy(`${prefix}-external-secrets-policy`, {
     name: `${prefix}-external-secrets-policy`,
-    role: externalSecretsRole.name,
     policy: externalSecretsPolicyDoc,
+});
+
+new aws.iam.RolePolicyAttachment(`${prefix}-external-secrets-attach`, {
+    role: externalSecretsRole.name,
+    policyArn: externalSecretsPolicy.arn,
 });
 
 // Fluent Bit ----------------------------------------------------------------
@@ -936,10 +944,14 @@ const karpenterControllerPolicyDoc = pulumi
         });
     });
 
-new aws.iam.RolePolicy(`${prefix}-karpenter-controller-policy`, {
+const karpenterControllerPolicy = new aws.iam.Policy(`${prefix}-karpenter-controller-policy`, {
     name: `${prefix}-karpenter-controller-policy`,
-    role: karpenterRole.name,
     policy: karpenterControllerPolicyDoc,
+});
+
+new aws.iam.RolePolicyAttachment(`${prefix}-karpenter-controller-attach`, {
+    role: karpenterRole.name,
+    policyArn: karpenterControllerPolicy.arn,
 });
 
 // Exports --------------------------------------------------------------------
