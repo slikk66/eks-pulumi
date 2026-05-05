@@ -17,7 +17,7 @@ import * as pulumi from "@pulumi/pulumi";
 import * as aws from "@pulumi/aws";
 import * as tls from "@pulumi/tls";
 
-import { prefix, clientVpnCidr, vpnHighAvailability } from "../pulumi.config";
+import { prefix, clientVpnCidr, vpnHighAvailability, azCount } from "../pulumi.config";
 import { vpcId, vpcCidrBlock, privateSubnetIds } from "./vpc";
 
 // CA -------------------------------------------------------------------------
@@ -147,8 +147,9 @@ const endpoint = new aws.ec2clientvpn.Endpoint(`${prefix}-vpn`, {
 // across the available associations via the endpoint DNS name.
 // https://docs.aws.amazon.com/vpn/latest/clientvpn-admin/cvpn-working-target.html
 if (vpnHighAvailability) {
-    // Hardcoded 3 matches vpc.ts's 3-AZ build.
-    for (let i = 0; i < 3; i++) {
+    // Loop bound tracks vpc.ts's azCount so HA assoc count matches the
+    // private subnet count exactly (no out-of-range index, no uncovered AZ).
+    for (let i = 0; i < azCount; i++) {
         new aws.ec2clientvpn.NetworkAssociation(`${prefix}-vpn-assoc-${i}`, {
             clientVpnEndpointId: endpoint.id,
             subnetId: privateSubnetIds.apply(ids => ids[i]),

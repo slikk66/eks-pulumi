@@ -5,6 +5,7 @@ config:
     eks-pulumi:kubernetesVersion: "1.35"
     eks-pulumi:vpcCidr: "10.50.0.0/16"
     eks-pulumi:enableNat: false                 # true = workers in private subnets, multi-AZ NAT
+    # eks-pulumi:azCount: 3                     # AZ count, range [2,6]. us-west-1 has only 2; us-east-1 supports 6.
 
     # Client VPN
     eks-pulumi:clientVpnCidr: "10.100.0.0/22"   # client IP pool, must not overlap vpcCidr

@@ -17,7 +17,7 @@ Minimal Pulumi (TypeScript) bootstrap for an Amazon EKS cluster. Creates only th
 
 | Layer | Resource |
 |---|---|
-| Networking | VPC (3 AZ, public + private subnets), S3 gateway endpoint, optional multi-AZ NAT |
+| Networking | VPC (configurable AZ count, default 3, public + private subnets), S3 gateway endpoint, optional multi-AZ NAT |
 | Cluster | EKS 1.35, private endpoint, OIDC, access entries (admin + EC2_LINUX) |
 | Addons (managed, auto-versioned) | vpc-cni, kube-proxy, coredns, eks-pod-identity-agent |
 | Compute | One 2-node Bottlerocket managed group (m7a.large, `CriticalAddonsOnly` taint) — hosts ArgoCD + Karpenter controller only |
@@ -80,6 +80,7 @@ config:
   eks-pulumi:vpcCidr: "10.50.0.0/16"
   eks-pulumi:clientVpnCidr: "10.100.0.0/22"
   eks-pulumi:enableNat: false                          # see Networking modes
+  eks-pulumi:azCount: 3                                # AZ count, [2,6]; set to 2 for us-west-1
   eks-pulumi:adminRoleArn: "arn:aws:iam::<ACCT>:role/<ROLE>"
   eks-pulumi:argoBootstrapRepoUrl: "https://github.com/<you>/eks-argo-bootstrap.git"
   eks-pulumi:argoBootstrapRepoRevision: "HEAD"
@@ -98,6 +99,8 @@ Stack name is `main` (not `stage` / `prod`) — this is a base, not an environme
 Default-off is safe: SGs deny all inbound except node-to-node and cluster-API; no NodePort services; cluster API itself is VPN-only. Public IPs on workers are not a vulnerability when the SG is correct.
 
 No single-AZ NAT option — losing one AZ would kill all egress; not worth the savings.
+
+**AZ count** is configurable via `azCount` (range `[2, 6]`, default `3`). Regions with fewer AZs (e.g. us-west-1: 2) require explicit `azCount: 2`; otherwise a pre-flight guard fails fast with `Region X has only N AZ(s); azCount=K requested`. CIDRs are derived deterministically from `vpcCidr` (each subnet a `/20`), so re-runs at the same `azCount` produce no diff churn. NAT gateway count tracks `azCount` when `enableNat=true`. EKS minimum 2 AZs is enforced; cap at 6 leaves CIDR headroom (a `/16` yields 16 `/20` slots; `2 × azCount` are used).
 
 ## State backend
 
@@ -174,10 +177,10 @@ eks-pulumi/
 | EKS control plane | ~$73/mo | ~$73/mo |
 | 2× m7a.large nodes | ~$133/mo | ~$133/mo |
 | AWS Client VPN (1 subnet assoc, 1 always-on connection) | ~$110/mo | ~$110/mo |
-| NAT gateways (3 AZ) | $0 | ~$98/mo + data |
+| NAT gateways (default 3 AZ; scales with `azCount`: 2 → ~$66/mo, 6 → ~$196/mo + data) | $0 | ~$98/mo + data |
 | S3 state, EIPs, misc | <$5/mo | <$5/mo |
 | **Baseline** | **~$321/mo** | **~$419/mo** |
-| VPN HA (`vpnHighAvailability: true`, +2 subnet assocs) | +~$144/mo | +~$144/mo |
+| VPN HA (`vpnHighAvailability: true`, +`azCount-1` subnet assocs at ~$72/mo each) | +~$144/mo | +~$144/mo |
 
 Add the GitOps stack (AMP, AMG, CloudWatch Logs, ALB) on top.
 

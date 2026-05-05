@@ -1,5 +1,6 @@
-// VPC for the EKS cluster — 3 AZ, public + private subnets, S3 gateway
-// endpoint (always), optional multi-AZ NAT (one per AZ) when enableNat=true.
+// VPC for the EKS cluster — configurable AZ count (default 3), public +
+// private subnets per AZ, S3 gateway endpoint (always), optional multi-AZ
+// NAT (one per AZ) when enableNat=true.
 //
 // Uses raw aws.ec2.* resources rather than awsx.ec2.Vpc: the awsx
 // abstraction hides per-subnet kubernetes.io/role/* tags and the
@@ -8,15 +9,65 @@
 import * as pulumi from "@pulumi/pulumi";
 import * as aws from "@pulumi/aws";
 
-import { prefix, region, vpcCidr, enableNat } from "../pulumi.config";
+import { prefix, region, vpcCidr, enableNat, azCount } from "../pulumi.config";
+
+// Equivalent to Terraform's cidrsubnet(): split `base` into 2^newbits
+// subnets of prefix (basePrefix + newbits) and return the netnum-th.
+// Pure synchronous string math — no Output<> wrapping needed.
+// https://developer.hashicorp.com/terraform/language/functions/cidrsubnet
+function cidrsubnet(base: string, newbits: number, netnum: number): string {
+    const [ip, prefixStr] = base.split("/");
+    const basePrefix = parseInt(prefixStr, 10);
+    const newPrefix = basePrefix + newbits;
+    if (newPrefix > 32) {
+        throw new Error(`cidrsubnet: result prefix /${newPrefix} > 32 (base=${base}, newbits=${newbits})`);
+    }
+    if (netnum < 0 || netnum >= 2 ** newbits) {
+        throw new Error(`cidrsubnet: netnum ${netnum} out of range for newbits ${newbits}`);
+    }
+    const octets = ip.split(".").map(o => parseInt(o, 10));
+    const baseInt = ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0;
+    const offset = (netnum * (2 ** (32 - newPrefix))) >>> 0;
+    const subnetInt = (baseInt | offset) >>> 0;
+    const out = [
+        (subnetInt >>> 24) & 0xff,
+        (subnetInt >>> 16) & 0xff,
+        (subnetInt >>> 8) & 0xff,
+        subnetInt & 0xff,
+    ];
+    return `${out.join(".")}/${newPrefix}`;
+}
+
+// vpcCidr must be /20 or larger so each subnet gets at least a /20
+// (~4096 IPs — fine for EKS pod density via prefix delegation).
+const vpcPrefix = parseInt(vpcCidr.split("/")[1], 10);
+if (vpcPrefix > 20) {
+    throw new Error(
+        `vpcCidr ${vpcCidr} too small (prefix /${vpcPrefix}); use /20 or larger so subnets are /20.`,
+    );
+}
+const newbits = 20 - vpcPrefix;
+
+// Deterministic /20 subnets derived from (vpcCidr, azCount). With the
+// default vpcCidr=10.50.0.0/16 and azCount=3 these match the previously
+// hardcoded values exactly: public=[.0.0/20,.16.0/20,.32.0/20],
+// private=[.48.0/20,.64.0/20,.80.0/20].
+const PUBLIC_CIDRS: string[] = Array.from({ length: azCount }, (_, i) => cidrsubnet(vpcCidr, newbits, i));
+const PRIVATE_CIDRS: string[] = Array.from({ length: azCount }, (_, i) => cidrsubnet(vpcCidr, newbits, azCount + i));
 
 const azs = aws.getAvailabilityZonesOutput({ state: "available" });
-const azNames = azs.names.apply(n => n.slice(0, 3));
-
-// Static /20 subnets aligned to the default 10.50.0.0/16 vpcCidr. If
-// vpcCidr is overridden, these CIDRs must be edited to match.
-const PUBLIC_CIDRS = ["10.50.0.0/20", "10.50.16.0/20", "10.50.32.0/20"];
-const PRIVATE_CIDRS = ["10.50.48.0/20", "10.50.64.0/20", "10.50.80.0/20"];
+// Pre-flight guard: fail loudly with region + counts if the region has
+// fewer AZs than requested. Without this, downstream subnet construction
+// surfaces as a cryptic CIDR / capacity error mid-apply.
+const azNames = pulumi.all([azs.names, region]).apply(([names, r]) => {
+    if (names.length < azCount) {
+        throw new Error(
+            `Region ${r} has only ${names.length} AZ(s); azCount=${azCount} requested. ` +
+            `Reduce azCount in Pulumi config or choose a region with at least ${azCount} AZs.`,
+        );
+    }
+    return names.slice(0, azCount);
+});
 
 const vpc = new aws.ec2.Vpc(`${prefix}-vpc`, {
     cidrBlock: vpcCidr,
@@ -35,7 +86,7 @@ const privateSubnets: aws.ec2.Subnet[] = [];
 const publicRouteTables: aws.ec2.RouteTable[] = [];
 const privateRouteTables: aws.ec2.RouteTable[] = [];
 
-for (let i = 0; i < 3; i++) {
+for (let i = 0; i < azCount; i++) {
     const az = azNames.apply(n => n[i]);
 
     // mapPublicIpOnLaunch: true is required for EKS managed node groups
