@@ -98,7 +98,7 @@ const vpcCniVersion = aws.eks.getAddonVersionOutput({
     mostRecent: true,
 });
 
-new aws.eks.Addon(`${prefix}-vpc-cni`, {
+export const vpcCniAddon = new aws.eks.Addon(`${prefix}-vpc-cni`, {
     clusterName: cluster.name,
     addonName: "vpc-cni",
     addonVersion: vpcCniVersion.version,
