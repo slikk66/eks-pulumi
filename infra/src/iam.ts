@@ -18,7 +18,11 @@
 import * as pulumi from "@pulumi/pulumi";
 import * as aws from "@pulumi/aws";
 
-import { prefix, region } from "../pulumi.config";
+import {
+    prefix,
+    region,
+    externalSecretsAllowedSecretArns,
+} from "../pulumi.config";
 import { oidcProvider, clusterName } from "./cluster";
 import { nodeRoleArn } from "./nodegroup";
 
@@ -417,9 +421,18 @@ new aws.iam.RolePolicy(`${prefix}-efs-csi-policy`, {
 });
 
 // External Secrets ----------------------------------------------------------
-// Permissive baseline: any Secrets Manager secret + any KMS decrypt. Tighten
-// to specific secret ARNs once the ClusterSecretStore wiring exists in the
-// GitOps repo.
+//
+// Scoped IRSA: the controller can read only secrets in the configured
+// allow-list. Empty config (default) → single-element glob
+// `secret:<prefix>-*`, which catches AWS's 6-char random suffix on every
+// Secrets Manager ARN. Populated config → literal ARN list (no glob added).
+//
+// kms:Decrypt is scoped to the AWS-managed default Secrets Manager key alias
+// (alias/aws/secretsmanager). Customer-managed KMS keys are NOT supported
+// here — add a separate config field if required (do not regress to "*").
+//
+// https://docs.aws.amazon.com/secretsmanager/latest/userguide/auth-and-access_iam-policies.html
+// https://docs.aws.amazon.com/kms/latest/developerguide/alias-authorization.html
 // https://external-secrets.io/main/provider/aws-secrets-manager/
 
 const externalSecretsRole = irsaRole(
@@ -428,21 +441,37 @@ const externalSecretsRole = irsaRole(
     "external-secrets",
 );
 
+const externalSecretsPolicyDoc = pulumi
+    .all([region, accountId])
+    .apply(([reg, acct]) => {
+        const secretArns = externalSecretsAllowedSecretArns.length > 0
+            ? externalSecretsAllowedSecretArns
+            : [`arn:${partition}:secretsmanager:${reg}:${acct}:secret:${prefix}-*`];
+        return JSON.stringify({
+            Version: "2012-10-17",
+            Statement: [
+                {
+                    Effect: "Allow",
+                    Action: [
+                        "secretsmanager:GetSecretValue",
+                        "secretsmanager:DescribeSecret",
+                    ],
+                    Resource: secretArns,
+                },
+                {
+                    Effect: "Allow",
+                    Action: ["kms:Decrypt"],
+                    Resource:
+                        `arn:${partition}:kms:${reg}:${acct}:alias/aws/secretsmanager`,
+                },
+            ],
+        });
+    });
+
 new aws.iam.RolePolicy(`${prefix}-external-secrets-policy`, {
     name: `${prefix}-external-secrets-policy`,
     role: externalSecretsRole.name,
-    policy: JSON.stringify({
-        Version: "2012-10-17",
-        Statement: [{
-            Effect: "Allow",
-            Action: [
-                "secretsmanager:GetSecretValue",
-                "secretsmanager:DescribeSecret",
-                "kms:Decrypt",
-            ],
-            Resource: "*",
-        }],
-    }),
+    policy: externalSecretsPolicyDoc,
 });
 
 // Fluent Bit ----------------------------------------------------------------

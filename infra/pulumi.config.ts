@@ -21,6 +21,11 @@ export const argoBootstrapRepoUrl = cfg.require("argoBootstrapRepoUrl");
 export const argoBootstrapRepoRevision = cfg.get("argoBootstrapRepoRevision") ?? "HEAD";
 export const argoBootstrapRepoPath = cfg.get("argoBootstrapRepoPath") ?? "bootstrap";
 
+// External Secrets IRSA — explicit allow-list of Secrets Manager ARNs.
+// Empty list (default) → iam.ts scopes reads to `secret:<prefix>-*` only.
+export const externalSecretsAllowedSecretArns =
+    cfg.getObject<string[]>("externalSecretsAllowedSecretArns") ?? [];
+
 // Resolved at runtime
 export const region = aws.getRegionOutput().id;
 
