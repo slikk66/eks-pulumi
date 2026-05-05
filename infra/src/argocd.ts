@@ -29,8 +29,9 @@ import {
     clusterEndpoint,
     clusterCertificateAuthorityData,
     oidcProvider,
+    podIdentityAgentAddon,
 } from "./cluster";
-import { nodeRole, nodeGroup } from "./nodegroup";
+import { nodeRole, nodeGroup, vpcCniAddon } from "./nodegroup";
 import {
     albControllerRoleArn,
     ebsCsiRoleArn,
@@ -97,16 +98,6 @@ const ns = new k8s.core.v1.Namespace(`${prefix}-argocd-ns`, {
 // Chart: argo-cd 9.5.11 (latest 9.5.x; deploys ArgoCD v3.3.x).
 //   https://artifacthub.io/packages/helm/argo/argo-cd
 //   https://github.com/argoproj/argo-helm/releases
-//
-// dependsOn note: the issue requests
-// `[cluster, vpcCniAddon, podIdentityAgentAddon, nodeGroup]` but the vpc-cni
-// and pod-identity-agent Addon resources are constructed without being
-// assigned to exported variables (cluster.ts:174-176, nodegroup.ts:101) and
-// the scope of this issue forbids modifying those files. The fallback is
-// `[cluster, nodeGroup]` plus a generous customTimeouts.create — addon
-// convergence (<60s typical) sits well inside the 30-min create budget, and
-// pod-identity-agent is irrelevant to ArgoCD itself (Karpenter consumes it,
-// and Karpenter is GitOps-installed downstream).
 
 export const argocdRelease = new k8s.helm.v3.Release(`${prefix}-argocd`, {
     chart: "argo-cd",
@@ -129,7 +120,7 @@ export const argocdRelease = new k8s.helm.v3.Release(`${prefix}-argocd`, {
 }, {
     provider: k8sProvider,
     customTimeouts: { create: "30m", update: "20m" },
-    dependsOn: [cluster, nodeGroup],
+    dependsOn: [cluster, vpcCniAddon, podIdentityAgentAddon, nodeGroup],
 });
 
 // GitOps-Bridge cluster Secret ---------------------------------------------

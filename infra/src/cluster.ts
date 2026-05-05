@@ -173,7 +173,7 @@ function managedAddon(localName: string, addonName: string): aws.eks.Addon {
 
 managedAddon("kube-proxy", "kube-proxy");
 managedAddon("coredns", "coredns");
-managedAddon("pod-identity-agent", "eks-pod-identity-agent");
+export const podIdentityAgentAddon = managedAddon("pod-identity-agent", "eks-pod-identity-agent");
 
 // Exports --------------------------------------------------------------------
 
