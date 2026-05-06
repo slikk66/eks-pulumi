@@ -149,20 +149,25 @@ const endpoint = new aws.ec2clientvpn.Endpoint(`${prefix}-vpn`, {
 // access — adds ~$72/mo per extra association. AWS load-balances connections
 // across the available associations via the endpoint DNS name.
 // https://docs.aws.amazon.com/vpn/latest/clientvpn-admin/cvpn-working-target.html
+// Auth rule must wait for at least one association to reach Associated
+// before AWS will promote the rule from authorizing → active. Without an
+// explicit dependsOn, Pulumi runs them concurrently and the rule's
+// default 10m create-timeout fires while AWS is still propagating.
+const associations: aws.ec2clientvpn.NetworkAssociation[] = [];
 if (vpnHighAvailability) {
     // Loop bound tracks vpc.ts's azCount so HA assoc count matches the
     // private subnet count exactly (no out-of-range index, no uncovered AZ).
     for (let i = 0; i < azCount; i++) {
-        new aws.ec2clientvpn.NetworkAssociation(`${prefix}-vpn-assoc-${i}`, {
+        associations.push(new aws.ec2clientvpn.NetworkAssociation(`${prefix}-vpn-assoc-${i}`, {
             clientVpnEndpointId: endpoint.id,
             subnetId: privateSubnetIds.apply(ids => ids[i]),
-        });
+        }));
     }
 } else {
-    new aws.ec2clientvpn.NetworkAssociation(`${prefix}-vpn-assoc`, {
+    associations.push(new aws.ec2clientvpn.NetworkAssociation(`${prefix}-vpn-assoc`, {
         clientVpnEndpointId: endpoint.id,
         subnetId: privateSubnetIds.apply(ids => ids[0]),
-    });
+    }));
 }
 
 new aws.ec2clientvpn.AuthorizationRule(`${prefix}-vpn-auth`, {
@@ -170,6 +175,9 @@ new aws.ec2clientvpn.AuthorizationRule(`${prefix}-vpn-auth`, {
     targetNetworkCidr: vpcCidrBlock,
     authorizeAllGroups: true,
     description: "Allow VPN clients to reach the entire VPC CIDR",
+}, {
+    dependsOn: associations,
+    customTimeouts: { create: "30m", delete: "30m" },
 });
 
 // .ovpn assembly -------------------------------------------------------------
