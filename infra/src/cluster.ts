@@ -115,13 +115,16 @@ export const cluster = new aws.eks.Cluster(`${prefix}-cluster`, {
 // OIDC provider --------------------------------------------------------------
 //
 // IRSA is mandatory for ALB Controller, EBS-CSI, EFS-CSI, and VPC-CNI.
-// thumbprintLists is empty: EKS uses an Amazon S3-hosted JWKS endpoint, so AWS
-// validates with its own trusted root CAs and ignores any configured
-// thumbprints.
+// thumbprintLists is empty at create: EKS uses an Amazon S3-hosted JWKS
+// endpoint, so AWS auto-derives the thumbprint from its trusted root CAs.
 // https://repost.aws/questions/QUqnijJ8BxSFOUgUeW8fg-Fg/oidc-provider-thumbprints-optional
 //
+// ignoreChanges: AWS populates the field server-side after create. Without
+// this, every refresh shows perpetual drift (`[] vs <auto-derived>`), and
+// every up tries to reset it. AWS owns this value; we don't fight it.
+//
 // Fallback: if AWS ever rejects `[]` at apply time, supply the current Amazon
-// Root CA 1 thumbprint (verify at apply time — rotates):
+// Root CA 1 thumbprint (verify — rotates):
 // `openssl s_client -showcerts -connect <oidc-issuer-host>:443 < /dev/null 2>&1 | \
 //   openssl x509 -fingerprint -sha1 -noout | sed 's/://g; s/.*=//' | tr A-Z a-z`
 
@@ -132,6 +135,7 @@ export const oidcProvider = new aws.iam.OpenIdConnectProvider(
         clientIdLists: ["sts.amazonaws.com"],
         thumbprintLists: [],
     },
+    { ignoreChanges: ["thumbprintLists"] },
 );
 
 // Admin access entry ---------------------------------------------------------

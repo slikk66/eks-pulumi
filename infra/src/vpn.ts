@@ -44,7 +44,10 @@ const serverKey = new tls.PrivateKey(`${prefix}-vpn-server-key`, {
 
 const serverCsr = new tls.CertRequest(`${prefix}-vpn-server-csr`, {
     privateKeyPem: serverKey.privateKeyPem,
-    subject: { commonName: "server" },
+    // AWS Client VPN validates the server cert has a domain (SAN).
+    // The DNS name is never resolved — it just needs to exist.
+    subject: { commonName: `vpn.${prefix}.internal` },
+    dnsNames: [`vpn.${prefix}.internal`],
 });
 
 const serverCert = new tls.LocallySignedCert(`${prefix}-vpn-server-cert`, {

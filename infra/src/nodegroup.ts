@@ -5,13 +5,13 @@
 // below).
 //
 // Also owns:
+//   - vpc-cni managed addon. MUST install before the node group: kubelet won't
+//     mark a node Ready until CNI is functional, and node-role no longer has
+//     AmazonEKS_CNI_Policy (IRSA-only via kube-system/aws-node SA).
 //   - Karpenter EC2_LINUX access entry. NO AccessPolicyAssociation — AWS
 //     forbids policy associations on non-STANDARD types; the bare EC2_LINUX
 //     entry implicitly grants system:nodes.
 //     https://docs.aws.amazon.com/eks/latest/userguide/access-policies.html
-//   - vpc-cni managed addon (dependsOn the node group so nodes exist before
-//     the CNI configures them; placing it here keeps cluster.ts free of
-//     reverse imports from nodegroup.ts).
 
 import * as pulumi from "@pulumi/pulumi";
 import * as aws from "@pulumi/aws";
@@ -55,6 +55,23 @@ const nodePolicyAttachments = nodeManagedPolicies.map(
 
 export const nodeRoleArn: pulumi.Output<string> = nodeRole.arn;
 
+// vpc-cni addon (must install before nodeGroup) ------------------------------
+
+const vpcCniVersion = aws.eks.getAddonVersionOutput({
+    addonName: "vpc-cni",
+    kubernetesVersion: cluster.version,
+    mostRecent: true,
+});
+
+export const vpcCniAddon = new aws.eks.Addon(`${prefix}-vpc-cni`, {
+    clusterName: cluster.name,
+    addonName: "vpc-cni",
+    addonVersion: vpcCniVersion.version,
+    serviceAccountRoleArn: vpcCniRoleArn,
+    resolveConflictsOnCreate: "OVERWRITE",
+    resolveConflictsOnUpdate: "OVERWRITE",
+});
+
 // Node group -----------------------------------------------------------------
 
 const workerSubnetIds = enableNat ? privateSubnetIds : publicSubnetIds;
@@ -76,7 +93,7 @@ export const nodeGroup = new aws.eks.NodeGroup(`${prefix}-system-ng`, {
     taints: [
         { key: "CriticalAddonsOnly", value: "true", effect: "NO_SCHEDULE" },
     ],
-}, { dependsOn: nodePolicyAttachments });
+}, { dependsOn: [...nodePolicyAttachments, vpcCniAddon] });
 
 // Karpenter access entry -----------------------------------------------------
 //
@@ -89,20 +106,3 @@ new aws.eks.AccessEntry(`${prefix}-node-entry`, {
     principalArn: nodeRole.arn,
     type: "EC2_LINUX",
 });
-
-// vpc-cni addon --------------------------------------------------------------
-
-const vpcCniVersion = aws.eks.getAddonVersionOutput({
-    addonName: "vpc-cni",
-    kubernetesVersion: cluster.version,
-    mostRecent: true,
-});
-
-export const vpcCniAddon = new aws.eks.Addon(`${prefix}-vpc-cni`, {
-    clusterName: cluster.name,
-    addonName: "vpc-cni",
-    addonVersion: vpcCniVersion.version,
-    serviceAccountRoleArn: vpcCniRoleArn,
-    resolveConflictsOnCreate: "OVERWRITE",
-    resolveConflictsOnUpdate: "OVERWRITE",
-}, { dependsOn: [nodeGroup] });

@@ -51,7 +51,13 @@ if (vpcStart <= vpnEnd && vpnStart <= vpcEnd) {
 // association per private subnet (multi-AZ HA, ~$72/mo per extra association).
 export const vpnHighAvailability = cfg.getBoolean("vpnHighAvailability") ?? false;
 
-// EKS access entry
+// EKS access entry.
+//
+// Pass the full IAM role ARN (with path if present, e.g. SSO roles include
+// `/aws-reserved/sso.amazonaws.com/<region>/...`). EKS rejects path-stripped
+// ARNs at access-entry create time because the underlying IAM role doesn't
+// exist at the path-less ARN. EKS handles the path → STS-assumed-role
+// matching itself at auth time.
 export const adminRoleArn = cfg.require("adminRoleArn");
 if (!/^arn:aws:iam::\d{12}:role\/[\w+=,.@/-]+$/.test(adminRoleArn)) {
     throw new Error(

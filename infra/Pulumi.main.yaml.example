@@ -11,7 +11,12 @@ config:
     eks-pulumi:clientVpnCidr: "10.100.0.0/22"   # client IP pool, must not overlap vpcCidr
     # eks-pulumi:vpnHighAvailability: false     # true = one assoc per private subnet (~$72/mo per extra AZ)
 
-    # Admin role for EKS access entry (your SSO/IAM admin role)
+    # Admin role for EKS access entry (your SSO/IAM admin role).
+    # Pass the full IAM ARN including any path. SSO roles include
+    # /aws-reserved/sso.amazonaws.com/<region>/... — keep it, do NOT strip.
+    # EKS rejects path-less ARNs at access-entry create (the role doesn't
+    # exist at that ARN). EKS handles matching against the STS assumed-role
+    # ARN (which drops the path) at auth time, server-side.
     eks-pulumi:adminRoleArn: "arn:aws:iam::<ACCOUNT_ID>:role/<YOUR_ADMIN_ROLE>"
 
     # GitOps bootstrap (ArgoCD root Application source)
