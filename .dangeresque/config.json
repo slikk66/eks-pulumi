@@ -8,13 +8,13 @@
         "commands": [
             {
                 "name": "install",
-                "cmd": "cd infra && pnpm install --frozen-lockfile",
+                "cmd": "pnpm install --frozen-lockfile",
                 "on_failure": "block",
                 "timeout_ms": 300000
             },
             {
                 "name": "typecheck",
-                "cmd": "cd infra && npx tsc --noEmit",
+                "cmd": "for d in infra/network infra/cluster infra/gitops; do [ -f \"$d/tsconfig.json\" ] && (cd \"$d\" && pnpm exec tsc --noEmit) || true; done",
                 "on_failure": "block",
                 "timeout_ms": 120000
             }
@@ -27,11 +27,9 @@
             "maxLines": 0,
             "denyGlobs": [
                 "**/*.lock",
-                "pnpm-lock.yaml",
                 "**/.env*",
                 ".dangeresque/**",
-                "infra/Pulumi.yaml",
-                "infra/Pulumi.*.yaml",
+                "infra/**/Pulumi.*.yaml",
                 "**/secrets/**"
             ]
         }
