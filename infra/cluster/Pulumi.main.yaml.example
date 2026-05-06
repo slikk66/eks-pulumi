@@ -1,0 +1,18 @@
+config:
+    aws:region: us-west-2
+
+    # Cluster
+    eks-pulumi-cluster:kubernetesVersion: "1.35"
+
+    # Admin role for EKS access entry (your SSO/IAM admin role).
+    # Pass the full IAM ARN including any path. SSO roles include
+    # /aws-reserved/sso.amazonaws.com/<region>/... — keep it, do NOT strip.
+    # EKS rejects path-less ARNs at access-entry create (the role doesn't
+    # exist at that ARN). EKS handles matching against the STS assumed-role
+    # ARN (which drops the path) at auth time, server-side.
+    eks-pulumi-cluster:adminRoleArn: "arn:aws:iam::<ACCOUNT_ID>:role/<YOUR_ADMIN_ROLE>"
+
+    # External Secrets IRSA — opt-in explicit allow-list of Secrets Manager ARNs.
+    # When omitted/empty, the role is scoped to `secret:<project>-<stack>-*` only.
+    # eks-pulumi-cluster:externalSecretsAllowedSecretArns:
+    #   - "arn:aws:secretsmanager:us-west-2:<ACCOUNT_ID>:secret:my-app-*"

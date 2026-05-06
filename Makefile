@@ -11,10 +11,11 @@ ifneq (,$(wildcard .env))
 endif
 
 # ---- Defaults --------------------------------------------------------------
-AWS_REGION ?= us-west-2
-STACK      ?= main
-PROJECT    := eks-pulumi
-KUBECONFIG_PATH := $(HOME)/.kube/$(PROJECT)-$(STACK)
+AWS_REGION      ?= us-west-2
+STACK           ?= main
+PROJECT         := eks-pulumi
+CLUSTER_PROJECT := eks-pulumi-cluster
+KUBECONFIG_PATH := $(HOME)/.kube/$(CLUSTER_PROJECT)-$(STACK)
 
 # ---- Auto-derive PULUMI_STATE_BUCKET if not set ----------------------------
 ifeq ($(strip $(PULUMI_STATE_BUCKET)),)
@@ -49,8 +50,12 @@ help:
 	@echo "    refresh-network          pulumi refresh (infra/network)"
 	@echo "    outputs-network          pulumi stack output --show-secrets (infra/network)"
 	@echo ""
-	@echo "  Cluster slice (placeholder until #22 slice 2):"
-	@echo "    preview-cluster / up-cluster / down-cluster / refresh-cluster / outputs-cluster"
+	@echo "  Cluster slice (live):"
+	@echo "    preview-cluster          pulumi preview (infra/cluster)"
+	@echo "    up-cluster               pulumi up    (infra/cluster)"
+	@echo "    down-cluster             pulumi destroy (infra/cluster)"
+	@echo "    refresh-cluster          pulumi refresh (infra/cluster)"
+	@echo "    outputs-cluster          pulumi stack output --show-secrets (infra/cluster)"
 	@echo ""
 	@echo "  Gitops slice (placeholder until #22 slice 3):"
 	@echo "    preview-gitops / up-gitops / down-gitops / refresh-gitops / outputs-gitops"
@@ -60,7 +65,7 @@ help:
 	@echo ""
 	@echo "  Access:"
 	@echo "    vpn-config               Write ./client.ovpn from network stack output"
-	@echo "    kubeconfig               (placeholder; live in slice 2)"
+	@echo "    kubeconfig               Write $(KUBECONFIG_PATH) from cluster stack output"
 	@echo ""
 	@echo "  Misc:"
 	@echo "    clean                    Remove node_modules and build artifacts"
@@ -104,10 +109,27 @@ outputs-network:
 	pulumi login "$(PULUMI_BACKEND_URL)"
 	cd infra/network && pulumi stack select --create $(STACK) && pulumi stack output --show-secrets
 
-# ---- Cluster (placeholder until #22 slice 2) -------------------------------
+# ---- Cluster (live) --------------------------------------------------------
 
-preview-cluster up-cluster down-cluster refresh-cluster outputs-cluster:
-	@echo "not implemented yet — see #22"
+preview-cluster: install
+	pulumi login "$(PULUMI_BACKEND_URL)"
+	cd infra/cluster && pulumi stack select --create $(STACK) && pulumi preview
+
+up-cluster: install
+	pulumi login "$(PULUMI_BACKEND_URL)"
+	cd infra/cluster && pulumi stack select --create $(STACK) && pulumi up --yes
+
+down-cluster:
+	pulumi login "$(PULUMI_BACKEND_URL)"
+	cd infra/cluster && pulumi stack select --create $(STACK) && pulumi destroy --yes
+
+refresh-cluster:
+	pulumi login "$(PULUMI_BACKEND_URL)"
+	cd infra/cluster && pulumi stack select --create $(STACK) && pulumi refresh --yes
+
+outputs-cluster:
+	pulumi login "$(PULUMI_BACKEND_URL)"
+	cd infra/cluster && pulumi stack select --create $(STACK) && pulumi stack output --show-secrets
 
 # ---- Gitops (placeholder until #22 slice 3) --------------------------------
 
@@ -127,7 +149,11 @@ vpn-config:
 	@echo "Wrote ./client.ovpn (mode 600)"
 
 kubeconfig:
-	@echo "not implemented yet — see #22 slice 2"
+	@mkdir -p $(dir $(KUBECONFIG_PATH))
+	@cd infra/cluster && pulumi stack output --show-secrets kubeconfig > $(KUBECONFIG_PATH)
+	@chmod 600 $(KUBECONFIG_PATH)
+	@echo "Wrote $(KUBECONFIG_PATH) (mode 600)"
+	@echo "    export KUBECONFIG=$(KUBECONFIG_PATH)"
 
 clean:
 	rm -rf node_modules \

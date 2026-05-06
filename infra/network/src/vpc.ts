@@ -178,3 +178,10 @@ export const vpcId: pulumi.Output<string> = vpc.id;
 export const vpcCidrBlock: pulumi.Output<string> = vpc.cidrBlock;
 export const publicSubnetIds: pulumi.Output<string[]> = pulumi.all(publicSubnets.map(s => s.id));
 export const privateSubnetIds: pulumi.Output<string[]> = pulumi.all(privateSubnets.map(s => s.id));
+
+// Worker subnet selection. Encapsulated here so the cluster slice does not
+// re-decode the network's enableNat config (which lives in this project's
+// pulumi.config.ts only): private subnets when NAT is on, public otherwise.
+// Public placement requires mapPublicIpOnLaunch=true on the subnet (set above).
+export const workerSubnetIds: pulumi.Output<string[]> = enableNat
+    ? privateSubnetIds : publicSubnetIds;

@@ -6,7 +6,7 @@
 
 import "./src/vpn";
 
-import { vpcId, vpcCidrBlock, publicSubnetIds, privateSubnetIds } from "./src/vpc";
+import { vpcId, vpcCidrBlock, publicSubnetIds, privateSubnetIds, workerSubnetIds } from "./src/vpc";
 import { clientVpnEndpointId, clientOvpn } from "./src/vpn";
 
 // `clientOvpn` is already wrapped with pulumi.secret(...) in src/vpn.ts;
@@ -16,6 +16,7 @@ export {
     vpcCidrBlock,
     publicSubnetIds,
     privateSubnetIds,
+    workerSubnetIds,
     clientVpnEndpointId,
     clientOvpn,
 };
