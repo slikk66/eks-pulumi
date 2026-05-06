@@ -1,0 +1,10 @@
+name: eks-pulumi-network
+description: VPC + AWS Client VPN for the eks-pulumi project (slice 1 of 3)
+runtime:
+    name: nodejs
+    options:
+        packagemanager: pnpm
+config:
+    pulumi:tags:
+        value:
+            pulumi:template: aws-typescript

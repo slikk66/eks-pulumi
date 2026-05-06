@@ -1,0 +1,11 @@
+config:
+    aws:region: us-west-2
+
+    # VPC
+    eks-pulumi-network:vpcCidr: "10.50.0.0/16"
+    eks-pulumi-network:enableNat: false             # true = workers in private subnets, multi-AZ NAT
+    # eks-pulumi-network:azCount: 3                 # AZ count, range [2,6]. us-west-1 has only 2; us-east-1 supports 6.
+
+    # Client VPN
+    eks-pulumi-network:clientVpnCidr: "10.100.0.0/22"   # client IP pool, must not overlap vpcCidr
+    # eks-pulumi-network:vpnHighAvailability: false     # true = one assoc per private subnet (~$72/mo per extra AZ)

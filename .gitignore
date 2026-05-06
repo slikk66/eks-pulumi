@@ -9,9 +9,9 @@
 .dangeresque/runs/
 
 # Pulumi stack files (real values gitignored; .example committed; project file committed)
-infra/Pulumi.*.yaml
-!infra/Pulumi.yaml
-!infra/Pulumi.*.yaml.example
+infra/**/Pulumi.*.yaml
+!infra/**/Pulumi.yaml
+!infra/**/Pulumi.*.yaml.example
 
 # Node
 node_modules/
@@ -22,6 +22,7 @@ yarn-error.log
 
 # TypeScript build output
 infra/bin/
+infra/**/bin/
 *.tsbuildinfo
 
 # VPN / PKI material (Pulumi generates these; never commit)

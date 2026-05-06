@@ -27,27 +27,40 @@ export PULUMI_SELF_MANAGED_STATE_LOCKING := 1
 export PULUMI_BACKEND_URL := s3://$(PULUMI_STATE_BUCKET)?region=$(AWS_REGION)&awssdk=v2
 
 # ---- Targets ---------------------------------------------------------------
-.PHONY: help bootstrap-state-bucket login install preview up down refresh \
-        vpn-config kubeconfig outputs clean
+.PHONY: help bootstrap-state-bucket login install \
+        preview up down refresh outputs \
+        preview-network up-network down-network refresh-network outputs-network \
+        preview-cluster up-cluster down-cluster refresh-cluster outputs-cluster \
+        preview-gitops up-gitops down-gitops refresh-gitops outputs-gitops \
+        vpn-config kubeconfig clean
 
 help:
-	@echo "eks-pulumi targets"
+	@echo "eks-pulumi targets (per-stack: -network, -cluster, -gitops)"
 	@echo ""
 	@echo "  Setup (one-time):"
 	@echo "    bootstrap-state-bucket   Create the Pulumi S3 state bucket (idempotent)"
-	@echo "    login                    pulumi login + stack select"
-	@echo "    install                  pnpm install"
+	@echo "    login                    pulumi login + stack select for all 3 projects"
+	@echo "    install                  pnpm install at workspace root"
 	@echo ""
-	@echo "  Lifecycle:"
-	@echo "    preview                  pulumi preview"
-	@echo "    up                       pulumi up (full cluster, ~25 min)"
-	@echo "    down                     pre-destroy + pulumi destroy + ENI sweep"
-	@echo "    refresh                  pulumi refresh"
+	@echo "  Network slice (live):"
+	@echo "    preview-network          pulumi preview (infra/network)"
+	@echo "    up-network               pulumi up    (infra/network)"
+	@echo "    down-network             pulumi destroy (infra/network)"
+	@echo "    refresh-network          pulumi refresh (infra/network)"
+	@echo "    outputs-network          pulumi stack output --show-secrets (infra/network)"
+	@echo ""
+	@echo "  Cluster slice (placeholder until #22 slice 2):"
+	@echo "    preview-cluster / up-cluster / down-cluster / refresh-cluster / outputs-cluster"
+	@echo ""
+	@echo "  Gitops slice (placeholder until #22 slice 3):"
+	@echo "    preview-gitops / up-gitops / down-gitops / refresh-gitops / outputs-gitops"
+	@echo ""
+	@echo "  Top-level (deferred to slice 4 of #22):"
+	@echo "    preview / up / down / refresh / outputs"
 	@echo ""
 	@echo "  Access:"
-	@echo "    vpn-config               Write ./client.ovpn from stack output"
-	@echo "    kubeconfig               Write kubeconfig (requires VPN connection)"
-	@echo "    outputs                  Print all stack outputs"
+	@echo "    vpn-config               Write ./client.ovpn from network stack output"
+	@echo "    kubeconfig               (placeholder; live in slice 2)"
 	@echo ""
 	@echo "  Misc:"
 	@echo "    clean                    Remove node_modules and build artifacts"
@@ -62,49 +75,62 @@ bootstrap-state-bucket:
 
 login:
 	pulumi login "$(PULUMI_BACKEND_URL)"
-	cd infra && pulumi stack select --create $(STACK)
+	cd infra/network && pulumi stack select --create $(STACK)
+	cd infra/cluster && pulumi stack select --create $(STACK)
+	cd infra/gitops  && pulumi stack select --create $(STACK)
 
 install:
-	cd infra && pnpm install
+	pnpm install
 
-preview: install
-	cd infra && pulumi preview
+# ---- Network (live) --------------------------------------------------------
 
-up: install
-	cd infra && pulumi up --yes
-	@$(MAKE) --no-print-directory kubeconfig
-	@echo ""
-	@echo "Next:"
-	@echo "  make vpn-config        # writes ./client.ovpn"
-	@echo "  (connect via your OpenVPN client)"
-	@echo "  export KUBECONFIG=$(KUBECONFIG_PATH)"
-	@echo "  kubectl get nodes"
+preview-network: install
+	pulumi login "$(PULUMI_BACKEND_URL)"
+	cd infra/network && pulumi stack select --create $(STACK) && pulumi preview
 
-down:
-	@./scripts/pre-destroy.sh
-	cd infra && pulumi destroy --yes
-	@./scripts/nuke-orphan-enis.sh || true
+up-network: install
+	pulumi login "$(PULUMI_BACKEND_URL)"
+	cd infra/network && pulumi stack select --create $(STACK) && pulumi up --yes
 
-refresh:
-	cd infra && pulumi refresh --yes
+down-network:
+	pulumi login "$(PULUMI_BACKEND_URL)"
+	cd infra/network && pulumi stack select --create $(STACK) && pulumi destroy --yes
+
+refresh-network:
+	pulumi login "$(PULUMI_BACKEND_URL)"
+	cd infra/network && pulumi stack select --create $(STACK) && pulumi refresh --yes
+
+outputs-network:
+	pulumi login "$(PULUMI_BACKEND_URL)"
+	cd infra/network && pulumi stack select --create $(STACK) && pulumi stack output --show-secrets
+
+# ---- Cluster (placeholder until #22 slice 2) -------------------------------
+
+preview-cluster up-cluster down-cluster refresh-cluster outputs-cluster:
+	@echo "not implemented yet — see #22"
+
+# ---- Gitops (placeholder until #22 slice 3) --------------------------------
+
+preview-gitops up-gitops down-gitops refresh-gitops outputs-gitops:
+	@echo "not implemented yet — see #22"
+
+# ---- Top-level orchestration (deferred to slice 4 of #22) ------------------
+
+preview up down refresh outputs:
+	@echo "not implemented yet — wait for slice 4 of #22"
+
+# ---- Access ----------------------------------------------------------------
 
 vpn-config:
-	@cd infra && pulumi stack output --show-secrets clientOvpn > ../client.ovpn
+	@cd infra/network && pulumi stack output --show-secrets clientOvpn > ../../client.ovpn
 	@chmod 600 client.ovpn
 	@echo "Wrote ./client.ovpn (mode 600)"
 
 kubeconfig:
-	$(eval CLUSTER_NAME := $(shell cd infra && pulumi stack output clusterName))
-	aws eks update-kubeconfig \
-		--region $(AWS_REGION) \
-		--name $(CLUSTER_NAME) \
-		--kubeconfig $(KUBECONFIG_PATH)
-	@echo ""
-	@echo "Kubeconfig: $(KUBECONFIG_PATH)"
-	@echo "export KUBECONFIG=$(KUBECONFIG_PATH)"
-
-outputs:
-	cd infra && pulumi stack output --show-secrets
+	@echo "not implemented yet — see #22 slice 2"
 
 clean:
-	rm -rf infra/node_modules infra/bin client.ovpn
+	rm -rf node_modules \
+	       infra/network/node_modules infra/cluster/node_modules infra/gitops/node_modules \
+	       infra/network/bin infra/cluster/bin infra/gitops/bin \
+	       client.ovpn

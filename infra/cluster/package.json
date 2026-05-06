@@ -1,0 +1,18 @@
+{
+    "name": "eks-pulumi-cluster",
+    "version": "0.1.0",
+    "private": true,
+    "main": "index.ts",
+    "engines": {
+        "node": ">=22"
+    },
+    "devDependencies": {
+        "@types/node": "^22",
+        "typescript": "^5.4.0"
+    },
+    "dependencies": {
+        "@pulumi/aws": "^7.0.0",
+        "@pulumi/kubernetes": "^4.18.0",
+        "@pulumi/pulumi": "^3.150.0"
+    }
+}

@@ -1,5 +1,5 @@
-name: eks-pulumi
-description: Minimal Pulumi bootstrap for an EKS cluster (ArgoCD takes over post-bootstrap)
+name: eks-pulumi-cluster
+description: EKS cluster + IAM + node groups for the eks-pulumi project (slice 2 of 3)
 runtime:
     name: nodejs
     options:

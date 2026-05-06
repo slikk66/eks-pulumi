@@ -1,0 +1,14 @@
+{
+    "name": "eks-pulumi",
+    "version": "0.1.0",
+    "private": true,
+    "engines": {
+        "node": ">=22"
+    },
+    "pnpm": {
+        "onlyBuiltDependencies": [
+            "@pulumi/kubernetes",
+            "protobufjs"
+        ]
+    }
+}
