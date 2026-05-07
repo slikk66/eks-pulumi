@@ -707,16 +707,17 @@ const karpenterRole = new aws.iam.Role(`${prefix}-karpenter-controller-role`, {
     }),
 });
 
-const karpenterControllerPolicyDoc = pulumi
+// Split into two managed policies — single doc exceeds the 6144-char IAM
+// PolicySize quota. EC2 lifecycle/tagging/read in one; SQS + IAM PassRole +
+// InstanceProfile + EKS DescribeCluster in the other.
+const karpenterControllerPolicyDocs = pulumi
     .all([region, accountId, clusterName])
     .apply(([reg, acct, cluster]) => {
         const nodeArn =
             `arn:aws:iam::${acct}:role/${prefix}-node-role`;
         const interruptionQueueArn =
             `arn:aws:sqs:${reg}:${acct}:${prefix}-karpenter-interruption`;
-        return JSON.stringify({
-            Version: "2012-10-17",
-            Statement: [
+        const ec2Statements = [
                 {
                     Sid: "AllowScopedEC2InstanceAccessActions",
                     Effect: "Allow",
@@ -883,6 +884,8 @@ const karpenterControllerPolicyDoc = pulumi
                     Resource: "*",
                     Action: "pricing:GetProducts",
                 },
+            ];
+        const iamStatements = [
                 {
                     Sid: "AllowInterruptionQueueActions",
                     Effect: "Allow",
@@ -979,18 +982,31 @@ const karpenterControllerPolicyDoc = pulumi
                     Resource: `arn:aws:eks:${reg}:${acct}:cluster/${cluster}`,
                     Action: "eks:DescribeCluster",
                 },
-            ],
-        });
+            ];
+        return {
+            ec2: JSON.stringify({ Version: "2012-10-17", Statement: ec2Statements }),
+            iam: JSON.stringify({ Version: "2012-10-17", Statement: iamStatements }),
+        };
     });
 
-const karpenterControllerPolicy = new aws.iam.Policy(`${prefix}-karpenter-controller-policy`, {
-    name: `${prefix}-karpenter-controller-policy`,
-    policy: karpenterControllerPolicyDoc,
+const karpenterEc2Policy = new aws.iam.Policy(`${prefix}-karpenter-ec2`, {
+    name: `${prefix}-karpenter-ec2`,
+    policy: karpenterControllerPolicyDocs.ec2,
 });
 
-new aws.iam.RolePolicyAttachment(`${prefix}-karpenter-controller-attach`, {
+const karpenterIamPolicy = new aws.iam.Policy(`${prefix}-karpenter-iam`, {
+    name: `${prefix}-karpenter-iam`,
+    policy: karpenterControllerPolicyDocs.iam,
+});
+
+new aws.iam.RolePolicyAttachment(`${prefix}-karpenter-ec2-attach`, {
     role: karpenterRole.name,
-    policyArn: karpenterControllerPolicy.arn,
+    policyArn: karpenterEc2Policy.arn,
+});
+
+new aws.iam.RolePolicyAttachment(`${prefix}-karpenter-iam-attach`, {
+    role: karpenterRole.name,
+    policyArn: karpenterIamPolicy.arn,
 });
 
 // Exports --------------------------------------------------------------------
