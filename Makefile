@@ -29,7 +29,7 @@ export PULUMI_BACKEND_URL := s3://$(PULUMI_STATE_BUCKET)?region=$(AWS_REGION)&aw
 
 # ---- Targets ---------------------------------------------------------------
 .PHONY: help bootstrap-state-bucket login install \
-        preview up down refresh outputs \
+        up down \
         preview-network up-network down-network refresh-network outputs-network \
         preview-cluster up-cluster down-cluster refresh-cluster outputs-cluster \
         preview-gitops up-gitops down-gitops refresh-gitops outputs-gitops \
@@ -64,8 +64,10 @@ help:
 	@echo "    refresh-gitops           pulumi refresh (infra/gitops)"
 	@echo "    outputs-gitops           pulumi stack output --show-secrets (infra/gitops)"
 	@echo ""
-	@echo "  Top-level (deferred to slice 4 of #22):"
-	@echo "    preview / up / down / refresh / outputs"
+	@echo "  Top-level orchestration (chains the 3 stacks):"
+	@echo "    up                       up-network -> vpn-config -> [PAUSE: connect VPN] -> up-cluster -> up-gitops"
+	@echo "    down                     down-gitops -> down-cluster -> down-network -> nuke-orphan-enis.sh"
+	@echo "                             (assumes interactive terminal — make up blocks on a read prompt)"
 	@echo ""
 	@echo "  Access:"
 	@echo "    vpn-config               Write ./client.ovpn from network stack output"
@@ -166,10 +168,50 @@ outputs-gitops:
 	pulumi login "$(PULUMI_BACKEND_URL)"
 	cd infra/gitops && pulumi stack select --create $(STACK) && pulumi stack output --show-secrets
 
-# ---- Top-level orchestration (deferred to slice 4 of #22) ------------------
+# ---- Top-level orchestration -----------------------------------------------
+#
+# `make up` — full bring-up with operator-driven VPN-connect pause:
+#   1. up-network (VPC + Client VPN)
+#   2. assert clientOvpn stack output present (defensive — should never fail)
+#   3. vpn-config (write ./client.ovpn, mode 600)
+#   4. PAUSE: operator connects to VPN with their OpenVPN client, presses enter
+#   5. up-cluster (EKS + IAM + addons + nodegroup)
+#   6. up-gitops (ArgoCD + GitOps-Bridge cluster Secret + root Application)
+#
+# Assumes an interactive terminal — the read prompt blocks indefinitely
+# otherwise. CI / unattended use is not supported (operator MUST connect
+# the VPN manually; OpenVPN client choice varies by OS).
+#
+# `make down` — reverse, with cluster-gone safety on gitops destroy.
+# PULUMI_K8S_DELETE_UNREACHABLE=true is set inside the down-gitops target,
+# so destroy completes even if the cluster API is already gone.
+#   1. down-gitops (pre-destroy.sh cascades root-app, then pulumi destroy)
+#   2. down-cluster (pulumi destroy)
+#   3. down-network (pulumi destroy)
+#   4. nuke-orphan-enis.sh (sweep ENIs left in 'available' state)
 
-preview up down refresh outputs:
-	@echo "not implemented yet — wait for slice 4 of #22"
+up:
+	@$(MAKE) up-network
+	@cd infra/network && \
+	  out="$$(pulumi stack output clientOvpn 2>/dev/null)"; \
+	  test -n "$$out" || { \
+	    echo ""; \
+	    echo "ERROR: up-network completed without a clientOvpn stack output."; \
+	    echo "       The Client VPN was not created — refusing to proceed."; \
+	    echo "       Inspect with: make outputs-network"; \
+	    exit 1; \
+	  }
+	@$(MAKE) vpn-config
+	@echo ""
+	@read -p "Connect to VPN now (use ./client.ovpn). Press enter to continue with cluster + gitops..." _
+	@$(MAKE) up-cluster
+	@$(MAKE) up-gitops
+
+down:
+	@$(MAKE) down-gitops
+	@$(MAKE) down-cluster
+	@$(MAKE) down-network
+	@./scripts/nuke-orphan-enis.sh
 
 # ---- Access ----------------------------------------------------------------
 
