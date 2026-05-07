@@ -160,7 +160,11 @@ new aws.eks.AccessPolicyAssociation(`${prefix}-admin-policy`, {
 // versions track the cluster on minor upgrades). resolveConflicts: OVERWRITE
 // on both create and update — Pulumi is the source of truth for these addons.
 
-function managedAddon(localName: string, addonName: string): aws.eks.Addon {
+function managedAddon(
+    localName: string,
+    addonName: string,
+    configurationValues?: string,
+): aws.eks.Addon {
     const v = aws.eks.getAddonVersionOutput({
         addonName,
         kubernetesVersion: cluster.version,
@@ -170,13 +174,18 @@ function managedAddon(localName: string, addonName: string): aws.eks.Addon {
         clusterName: cluster.name,
         addonName,
         addonVersion: v.version,
+        configurationValues,
         resolveConflictsOnCreate: "OVERWRITE",
         resolveConflictsOnUpdate: "OVERWRITE",
     });
 }
 
 managedAddon("kube-proxy", "kube-proxy");
-managedAddon("coredns", "coredns");
+// CoreDNS is a Deployment (not DaemonSet) → needs explicit toleration for
+// the system nodegroup's CriticalAddonsOnly taint or pods stay Pending.
+managedAddon("coredns", "coredns", JSON.stringify({
+    tolerations: [{ key: "CriticalAddonsOnly", operator: "Exists" }],
+}));
 export const podIdentityAgentAddon = managedAddon("pod-identity-agent", "eks-pod-identity-agent");
 
 // Exports --------------------------------------------------------------------
