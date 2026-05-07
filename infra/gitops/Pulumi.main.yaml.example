@@ -1,0 +1,8 @@
+config:
+    # GitOps bootstrap (ArgoCD root Application source). The repo is the
+    # public eks-argo-bootstrap template (or your fork). Pulumi plants a
+    # root Application CR pointing at this repo; ArgoCD takes over from
+    # there for everything else (Karpenter, ALB Controller, CSI, ESO, ...).
+    eks-pulumi-gitops:argoBootstrapRepoUrl: "https://github.com/<your-org>/eks-argo-bootstrap.git"
+    eks-pulumi-gitops:argoBootstrapRepoRevision: "HEAD"
+    eks-pulumi-gitops:argoBootstrapRepoPath: "bootstrap"

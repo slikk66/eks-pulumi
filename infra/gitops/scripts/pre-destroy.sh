@@ -22,7 +22,9 @@
 set -euo pipefail
 
 # ---- Locate repo root and load .env ---------------------------------------
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# This script lives at infra/gitops/scripts/pre-destroy.sh — three levels
+# below the repo root.
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 ENV_FILE="$ROOT_DIR/.env"
 
 if [[ -f "$ENV_FILE" ]]; then
@@ -34,7 +36,9 @@ fi
 
 AWS_REGION="${AWS_REGION:-us-west-2}"
 STACK="${STACK:-main}"
-KUBECONFIG_PATH="${HOME}/.kube/eks-pulumi-${STACK}"
+# Kubeconfig path matches the Makefile's `kubeconfig` target, which writes
+# ~/.kube/<cluster-project>-<stack> (cluster-project = eks-pulumi-cluster).
+KUBECONFIG_PATH="${HOME}/.kube/eks-pulumi-cluster-${STACK}"
 
 ts() { printf '[%s] ' "$(date +%H:%M:%S)"; }
 

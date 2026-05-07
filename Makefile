@@ -57,8 +57,12 @@ help:
 	@echo "    refresh-cluster          pulumi refresh (infra/cluster)"
 	@echo "    outputs-cluster          pulumi stack output --show-secrets (infra/cluster)"
 	@echo ""
-	@echo "  Gitops slice (placeholder until #22 slice 3):"
-	@echo "    preview-gitops / up-gitops / down-gitops / refresh-gitops / outputs-gitops"
+	@echo "  Gitops slice (live):"
+	@echo "    preview-gitops           pulumi preview (infra/gitops)"
+	@echo "    up-gitops                pulumi up    (infra/gitops)"
+	@echo "    down-gitops              pre-destroy.sh + pulumi destroy (infra/gitops)"
+	@echo "    refresh-gitops           pulumi refresh (infra/gitops)"
+	@echo "    outputs-gitops           pulumi stack output --show-secrets (infra/gitops)"
 	@echo ""
 	@echo "  Top-level (deferred to slice 4 of #22):"
 	@echo "    preview / up / down / refresh / outputs"
@@ -131,10 +135,36 @@ outputs-cluster:
 	pulumi login "$(PULUMI_BACKEND_URL)"
 	cd infra/cluster && pulumi stack select --create $(STACK) && pulumi stack output --show-secrets
 
-# ---- Gitops (placeholder until #22 slice 3) --------------------------------
+# ---- Gitops (live) ---------------------------------------------------------
 
-preview-gitops up-gitops down-gitops refresh-gitops outputs-gitops:
-	@echo "not implemented yet — see #22"
+preview-gitops: install
+	pulumi login "$(PULUMI_BACKEND_URL)"
+	cd infra/gitops && pulumi stack select --create $(STACK) && pulumi preview
+
+up-gitops: install
+	pulumi login "$(PULUMI_BACKEND_URL)"
+	cd infra/gitops && pulumi stack select --create $(STACK) && pulumi up --yes
+
+# `down-gitops` runs the in-cluster cleanup hook FIRST (cascade root-app, drain
+# Ingresses / LoadBalancer Services / NodeClaims, settle 30s) so AWS-attached
+# objects are gone before pulumi tries to delete the k8s resources.
+# PULUMI_K8S_DELETE_UNREACHABLE=true lets `pulumi destroy` complete even if
+# the cluster API is already gone (cluster destroyed first, VPN down, etc.).
+#   https://github.com/pulumi/pulumi-kubernetes/issues/2517
+#   https://github.com/pulumi/pulumi-kubernetes/issues/2311
+down-gitops:
+	@./infra/gitops/scripts/pre-destroy.sh
+	pulumi login "$(PULUMI_BACKEND_URL)"
+	cd infra/gitops && pulumi stack select --create $(STACK) && \
+	  PULUMI_K8S_DELETE_UNREACHABLE=true pulumi destroy --yes
+
+refresh-gitops:
+	pulumi login "$(PULUMI_BACKEND_URL)"
+	cd infra/gitops && pulumi stack select --create $(STACK) && pulumi refresh --yes
+
+outputs-gitops:
+	pulumi login "$(PULUMI_BACKEND_URL)"
+	cd infra/gitops && pulumi stack select --create $(STACK) && pulumi stack output --show-secrets
 
 # ---- Top-level orchestration (deferred to slice 4 of #22) ------------------
 
