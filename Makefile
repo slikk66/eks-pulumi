@@ -205,6 +205,7 @@ up:
 	@echo ""
 	@read -p "Connect to VPN now (use ./client.ovpn). Press enter to continue with cluster + gitops..." _
 	@$(MAKE) up-cluster
+	@$(MAKE) kubeconfig
 	@$(MAKE) up-gitops
 
 down:
