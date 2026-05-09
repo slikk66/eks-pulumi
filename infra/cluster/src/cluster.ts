@@ -25,7 +25,13 @@ import {
     kubernetesVersion,
     adminRoleArn,
 } from "../pulumi.config";
-import { vpcId, vpcCidrBlock, publicSubnetIds, privateSubnetIds } from "./stack-references";
+import {
+    vpcId,
+    vpcCidrBlock,
+    publicSubnetIds,
+    privateSubnetIds,
+    workerSubnetIds,
+} from "./stack-references";
 
 // Cluster IAM role -----------------------------------------------------------
 
@@ -88,6 +94,24 @@ new aws.vpc.SecurityGroupEgressRule(`${prefix}-cluster-sg-egress`, {
     cidrIpv4: "0.0.0.0/0",
     description: "All egress",
 });
+
+// Karpenter subnet discovery -------------------------------------------------
+//
+// Karpenter's EC2NodeClass selects subnets by tag. The network stack creates
+// the subnets (without knowing the cluster name yet), so we add the discovery
+// tag here in the cluster stack via aws.ec2.Tag (mutates an existing resource
+// without recreating it).
+// https://karpenter.sh/docs/concepts/nodeclasses/#specsubnetselectorterms
+
+workerSubnetIds.apply(ids =>
+    ids.map((id, i) =>
+        new aws.ec2.Tag(`${prefix}-subnet-karpenter-${i}`, {
+            resourceId: id,
+            key: "karpenter.sh/discovery",
+            value: clusterNameStr,
+        }),
+    ),
+);
 
 // EKS cluster ----------------------------------------------------------------
 

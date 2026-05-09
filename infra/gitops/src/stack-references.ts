@@ -20,6 +20,7 @@ function clusterString(name: string): pulumi.Output<string> {
 export const accountId                      = clusterString("accountId");
 export const region                         = clusterString("region");
 export const clusterName                    = clusterString("clusterName");
+export const vpcId                          = clusterString("vpcId");
 // kubeconfig is secret-marked at the cluster stack output; the marking
 // propagates through requireOutput so the k8s.Provider receives a secret.
 export const kubeconfig                     = clusterString("kubeconfig");

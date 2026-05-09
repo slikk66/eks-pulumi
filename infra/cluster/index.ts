@@ -6,7 +6,7 @@
 //   oidcProviderUrl, albRoleArn, ebsCsiRoleArn, efsCsiRoleArn, vpcCniRoleArn,
 //   externalSecretsRoleArn, fluentBitRoleArn, karpenterRoleArn,
 //   karpenterNodeRoleArn, karpenterNodeRoleName, karpenterInterruptionQueueName,
-//   accountId, region.
+//   accountId, region, vpcId.
 
 import "./src/karpenter-aws";
 
@@ -29,6 +29,7 @@ import {
 } from "./src/iam";
 import { nodeRoleArn, karpenterNodeRoleName } from "./src/nodegroup";
 import { interruptionQueueName } from "./src/karpenter-aws";
+import { vpcId } from "./src/stack-references";
 
 // kubeconfig (exec-auth, v1beta1 client.authentication API). Pattern from
 // the legacy infra/src/argocd.ts kubeconfig builder; gitops slice rebuilds
@@ -72,6 +73,7 @@ export {
     clusterEndpoint,
     region,
     accountId,
+    vpcId,
     ebsCsiRoleArn,
     efsCsiRoleArn,
     vpcCniRoleArn,
