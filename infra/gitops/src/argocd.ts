@@ -66,7 +66,19 @@ const ns = new k8s.core.v1.Namespace(`${prefix}-argocd-ns`, {
 // `global.tolerations` to controller / server / repo-server / applicationSet
 // / notifications / dex / redis when no per-component override is set.
 
+// Seed install. After first apply, ownership transfers to the eks-argo-bootstrap
+// self-managed Application (which targets the same Helm release name "argocd"
+// at the same chart version). `ignoreChanges: ["*"]` makes Pulumi stop
+// reconciling so subsequent chart upgrades flow through GitOps PRs in
+// eks-argo-bootstrap, not through `pulumi up`. Without ignoreChanges, every
+// pulumi up would fight ArgoCD's Application reconciliation.
+//
+// Release name is explicit ("argocd") so the self-managed Application's
+// `releaseName: argocd` is idempotent — no duplicate install, single Helm
+// release, single owner of chart resources after seed.
+
 const argocdRelease = new k8s.helm.v3.Release(`${prefix}-argocd`, {
+    name: "argocd",
     chart: "argo-cd",
     version: "9.5.11",
     namespace: ns.metadata.name,
@@ -91,6 +103,7 @@ const argocdRelease = new k8s.helm.v3.Release(`${prefix}-argocd`, {
 }, {
     provider: k8sProvider,
     customTimeouts: { create: "10m", update: "5m" },
+    ignoreChanges: ["*"],
 });
 
 // GitOps-Bridge cluster Secret ---------------------------------------------
