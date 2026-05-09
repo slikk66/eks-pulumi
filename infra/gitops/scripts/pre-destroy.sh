@@ -138,6 +138,35 @@ else
 fi
 echo ""
 
+# ---- Phase 4: strip orphaned ArgoCD hook-finalizers in argocd ns ----------
+# ArgoCD's hook mechanism stamps `argocd.argoproj.io/hook-finalizer` on
+# resources spawned by Helm hooks during Application sync (e.g. the chart's
+# own argocd-redis-secret-init Job). Once ArgoCD itself is being torn down,
+# nothing remains to clear these finalizers — the argocd namespace then
+# hangs in Terminating for ~5min until `kubectl delete ns --force` or a
+# manual finalizer strip. We do the strip here proactively.
+#
+# Safe / idempotent: only matches resources that still carry the finalizer.
+ts; echo "phase 4: strip argocd hook-finalizers in argocd ns"
+if kubectl get ns argocd >/dev/null 2>&1; then
+  for kind in jobs.batch serviceaccounts roles.rbac.authorization.k8s.io rolebindings.rbac.authorization.k8s.io; do
+    set +e
+    names=$(kubectl get "$kind" -n argocd \
+      -o jsonpath='{range .items[?(@.metadata.finalizers)]}{.metadata.name}{"\n"}{end}' \
+      2>/dev/null)
+    set -e
+    while IFS= read -r name; do
+      [[ -z "$name" ]] && continue
+      ts; echo "  patching $kind/$name"
+      kubectl patch "$kind" "$name" -n argocd --type=merge \
+        -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
+    done <<< "$names"
+  done
+else
+  ts; echo "phase 4: argocd ns absent — skipping"
+fi
+echo ""
+
 # ---- Tail: LB controller eventual consistency -----------------------------
 # Even after Ingress/Service objects vanish, the LB controller may still be
 # finalizing target group / listener deletions in AWS. 30s buffer reduces
