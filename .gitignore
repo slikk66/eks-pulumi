@@ -51,3 +51,4 @@ pulumi-output.log
 
 # Session handoff doc
 HANDOFF.md
+.dangeresque/sessions/

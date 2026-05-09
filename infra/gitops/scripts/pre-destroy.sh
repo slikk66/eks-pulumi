@@ -1,19 +1,23 @@
 #!/usr/bin/env bash
 # pre-destroy.sh
-# In-cluster cleanup ahead of `pulumi destroy`. Drains Karpenter, cascades
-# the ArgoCD root app, then waits for AWS-attached objects (Ingresses,
-# LoadBalancer Services) to drain so Pulumi can tear down the VPC/EKS layer
-# without orphaned ENIs, ALBs, or EC2 instances.
+# In-cluster cleanup ahead of `pulumi destroy`. Drives each addon controller
+# (ALB Controller, EBS/EFS CSI, Karpenter) through its own happy-path
+# cleanup of AWS-attached resources while the controller is still alive,
+# then cascades the ArgoCD root app, then sweeps any AWS-side leftovers
+# directly. The end state is: zero EC2 instances, ALBs/NLBs, EBS volumes,
+# or ENIs left referencing the cluster, so Pulumi's VPC/EKS teardown does
+# not race or block.
 #
-# Idempotent: safe to re-run. No-op if the kubeconfig is missing (cluster
-# already gone) or if ArgoCD / Karpenter CRDs are not present.
+# Idempotent: safe to re-run. No-op of in-cluster phases if the kubeconfig
+# is missing or API server is unreachable; AWS-side sweep still runs.
 #
 # Dependencies: bash 4+, kubectl >= 1.32, AWS CLI v2.
 #
 # References:
-#   ArgoCD cascade delete (foreground propagation):
+#   ArgoCD cascade delete + auto-sync semantics:
+#     https://argo-cd.readthedocs.io/en/stable/user-guide/auto_sync/
 #     https://argo-cd.readthedocs.io/en/stable/user-guide/app_deletion/
-#   AWS LB Controller cleanup behavior on Ingress/Service deletion:
+#   AWS LB Controller cleanup (Ingress/Service finalizers, ALB tagging):
 #     https://docs.aws.amazon.com/eks/latest/userguide/aws-load-balancer-controller.html
 #   Karpenter NodeClaim termination / disruption:
 #     https://karpenter.sh/docs/concepts/disruption/
@@ -21,8 +25,6 @@
 set -euo pipefail
 
 # ---- Locate repo root and load .env ---------------------------------------
-# This script lives at infra/gitops/scripts/pre-destroy.sh — three levels
-# below the repo root.
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 ENV_FILE="$ROOT_DIR/.env"
 
@@ -35,8 +37,6 @@ fi
 
 AWS_REGION="${AWS_REGION:-us-west-2}"
 STACK="${STACK:-main}"
-# Kubeconfig path matches the Makefile's `kubeconfig` target, which writes
-# ~/.kube/<cluster-project>-<stack> (cluster-project = eks-pulumi-cluster).
 KUBECONFIG_PATH="${HOME}/.kube/eks-pulumi-cluster-${STACK}"
 # Cluster name matches infra/cluster/pulumi.config.ts:
 #   prefix = `${project}-${stack}` where project = eks-pulumi-cluster
@@ -46,7 +46,6 @@ CLUSTER_NAME="eks-pulumi-cluster-${STACK}-cluster"
 ts() { printf '[%s] ' "$(date +%H:%M:%S)"; }
 
 # ---- Polling helper -------------------------------------------------------
-# poll_until_zero <label> <timeout-seconds> <shell-command-printing-int>
 poll_until_zero() {
   local label="$1"
   local timeout_s="$2"
@@ -80,10 +79,16 @@ ts; echo "pre-destroy: stack=${STACK} region=${AWS_REGION} cluster=${CLUSTER_NAM
 ts; echo "pre-destroy: kubeconfig=${KUBECONFIG_PATH}"
 echo ""
 
-# ---- Phase 5 (AWS-side, runs even without kubeconfig) helper --------------
-# Defined here so the kubeconfig-missing fast path below can still invoke it.
+# ===========================================================================
+# AWS-side sweep functions (defined here so the kubeconfig-missing fast
+# path can also invoke them).
+# ===========================================================================
+
+# Terminate any EC2 instance tagged karpenter.sh/nodepool AND
+# kubernetes.io/cluster/<name>=owned. Catches Karpenter-launched nodes
+# orphaned because the controller died before draining them.
 sweep_orphan_karpenter_instances() {
-  ts; echo "phase 5: AWS-side sweep for orphan Karpenter EC2 instances"
+  ts; echo "sweep: orphan Karpenter EC2 instances"
 
   local ids
   ids=$(aws ec2 describe-instances \
@@ -96,19 +101,18 @@ sweep_orphan_karpenter_instances() {
     --output text 2>/dev/null | tr '\t' '\n' | sed '/^$/d')
 
   if [[ -z "$ids" ]]; then
-    ts; echo "phase 5: 0 orphan instances (cleared)"
+    ts; echo "sweep: 0 orphan Karpenter instances"
     return 0
   fi
 
-  ts; echo "phase 5: terminating $(echo "$ids" | wc -l | tr -d ' ') orphan instance(s):"
+  ts; echo "sweep: terminating $(echo "$ids" | wc -l | tr -d ' ') Karpenter instance(s):"
   echo "$ids" | sed 's/^/  /'
   # shellcheck disable=SC2086
   aws ec2 terminate-instances --region "$AWS_REGION" --instance-ids $ids \
     --query 'TerminatingInstances[*].[InstanceId,CurrentState.Name]' \
     --output text 2>&1 | sed 's/^/  /'
 
-  # Wait for shutdown so Pulumi's SG delete doesn't race ENI detachment.
-  poll_until_zero "phase 5: instances still attaching ENIs" 600 "
+  poll_until_zero "sweep: instances still attaching ENIs" 600 "
     aws ec2 describe-instances \
       --region '$AWS_REGION' \
       --instance-ids $(echo "$ids" | tr '\n' ' ') \
@@ -117,53 +121,175 @@ sweep_orphan_karpenter_instances() {
   " || true
 }
 
-# ---- Skip kubectl phases if kubeconfig missing ----------------------------
+# Delete ALBs/NLBs and Target Groups tagged elbv2.k8s.aws/cluster=<name>.
+# Catches LBs orphaned because the ALB controller died before its consumers'
+# Ingress/LoadBalancer-Service objects were deleted (controller normally
+# cleans up via finalizers, but if it dies first the finalizers strand the
+# K8s object and the AWS LB).
+sweep_orphan_load_balancers() {
+  ts; echo "sweep: orphan ALB/NLB load balancers + target groups"
+
+  # Resource Groups Tagging API returns LB and TG ARNs in one call.
+  local arns lb_arns tg_arns
+  arns=$(aws resourcegroupstaggingapi get-resources \
+    --region "$AWS_REGION" \
+    --tag-filters "Key=elbv2.k8s.aws/cluster,Values=${CLUSTER_NAME}" \
+    --resource-type-filters \
+      elasticloadbalancing:loadbalancer \
+      elasticloadbalancing:targetgroup \
+    --query 'ResourceTagMappingList[*].ResourceARN' \
+    --output text 2>/dev/null | tr '\t' '\n' | sed '/^$/d')
+
+  if [[ -z "$arns" ]]; then
+    ts; echo "sweep: 0 orphan load balancers / target groups"
+    return 0
+  fi
+
+  lb_arns=$(echo "$arns" | grep ':loadbalancer/' || true)
+  tg_arns=$(echo "$arns" | grep ':targetgroup/' || true)
+
+  # Delete LBs first; target groups can't be removed while attached to a
+  # listener.
+  if [[ -n "$lb_arns" ]]; then
+    ts; echo "sweep: deleting $(echo "$lb_arns" | wc -l | tr -d ' ') load balancer(s)"
+    while IFS= read -r arn; do
+      [[ -z "$arn" ]] && continue
+      ts; echo "  delete-load-balancer $arn"
+      aws elbv2 delete-load-balancer --region "$AWS_REGION" \
+        --load-balancer-arn "$arn" 2>&1 | sed 's/^/    /' || true
+    done <<< "$lb_arns"
+
+    # Wait for AWS to actually deprovision so target-group delete and
+    # subsequent VPC subnet/SG delete don't race.
+    ts; echo "sweep: waiting for load balancers to fully deprovision (timeout 5m)"
+    while IFS= read -r arn; do
+      [[ -z "$arn" ]] && continue
+      aws elbv2 wait load-balancers-deleted --region "$AWS_REGION" \
+        --load-balancer-arns "$arn" 2>/dev/null || true
+    done <<< "$lb_arns"
+  fi
+
+  if [[ -n "$tg_arns" ]]; then
+    ts; echo "sweep: deleting $(echo "$tg_arns" | wc -l | tr -d ' ') target group(s)"
+    while IFS= read -r arn; do
+      [[ -z "$arn" ]] && continue
+      ts; echo "  delete-target-group $arn"
+      aws elbv2 delete-target-group --region "$AWS_REGION" \
+        --target-group-arn "$arn" 2>&1 | sed 's/^/    /' || true
+    done <<< "$tg_arns"
+  fi
+}
+
+# ---- Skip kubectl phases if kubeconfig missing or API unreachable --------
 if [[ ! -f "$KUBECONFIG_PATH" ]]; then
   ts; echo "WARN: kubeconfig not found — cluster likely already torn down."
   ts; echo "      skipping in-cluster phases; running AWS-side sweep only."
   echo ""
   sweep_orphan_karpenter_instances
+  echo ""
+  sweep_orphan_load_balancers
+  echo ""
   ts; echo "pre-destroy: complete"
   exit 0
 fi
 
 export KUBECONFIG="$KUBECONFIG_PATH"
 
-# Probe API server. If unreachable (VPN down, control plane gone), warn + skip.
 if ! kubectl version --request-timeout=10s >/dev/null 2>&1; then
   ts; echo "WARN: kubectl cannot reach the API server (VPN connected?)."
   ts; echo "      skipping in-cluster phases; running AWS-side sweep only."
   echo ""
   sweep_orphan_karpenter_instances
+  echo ""
+  sweep_orphan_load_balancers
+  echo ""
   ts; echo "pre-destroy: complete"
   exit 0
 fi
 
-# ---- Phase 1: drain Karpenter --------------------------------------------
-# Delete NodePools while Karpenter is still alive so it terminates its own
-# NodeClaims (and thus the EC2 instances) cleanly. If we wait until the
-# root-app cascade tears down the karpenter Application, the controller is
-# gone and its provisioned instances orphan, blocking cluster-SG delete on
-# `pulumi destroy` because their ENIs still reference the SG.
-#
-# Phase 5 below is the AWS-side fallback for instances Karpenter couldn't
-# drain (e.g. controller pod Pending, CRDs already gone).
-ts; echo "phase 1: drain Karpenter (delete nodepools + wait nodeclaims=0)"
-if kubectl get crd nodepools.karpenter.sh >/dev/null 2>&1; then
-  set +e
-  kubectl delete nodepools --all --wait=true --timeout=5m 2>&1 | sed 's/^/  /'
-  set -e
-  poll_until_zero "nodeclaims" 600 '
-    kubectl get nodeclaims --no-headers 2>/dev/null | wc -l | tr -d " "
-  ' || true
+# ===========================================================================
+# In-cluster phases
+# ===========================================================================
+
+# ---- Phase 0: pause ArgoCD reconciliation --------------------------------
+# Without this, selfHeal=true on every App will recreate any resource we
+# delete in phase 1 within ~3min. Patching `spec.syncPolicy.automated` to
+# null disables auto-sync + selfHeal + auto-prune for the rest of the
+# teardown. The cascade in phase 2 still works because resources-finalizer
+# triggers ArgoCD reconciliation regardless of automated mode.
+ts; echo "phase 0: disable ArgoCD auto-sync/selfHeal on all Applications"
+if kubectl get crd applications.argoproj.io >/dev/null 2>&1; then
+  apps=$(kubectl get applications.argoproj.io -n argocd \
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null)
+  count=0
+  while IFS= read -r app; do
+    [[ -z "$app" ]] && continue
+    kubectl patch application "$app" -n argocd --type=merge \
+      -p '{"spec":{"syncPolicy":{"automated":null}}}' >/dev/null 2>&1 || true
+    count=$((count + 1))
+  done <<< "$apps"
+  ts; echo "phase 0: paused ${count} Application(s)"
 else
-  ts; echo "phase 1: Karpenter CRDs not installed — skipping"
+  ts; echo "phase 0: ArgoCD CRDs not installed — skipping"
 fi
 echo ""
 
-# ---- Phase 2: cascade-delete ArgoCD root app ------------------------------
-ts; echo "phase 2: cascade-delete ArgoCD root-app (timeout 15m)"
+# ---- Phase 1: drain in-cluster AWS-attached resources --------------------
+# Each kind below maps to AWS resources that the corresponding controller
+# is responsible for cleaning up. Delete the K8s object → controller
+# observes the deletion → controller calls AWS to release the resource →
+# K8s object's finalizer clears → object disappears.
+#
+# Order is intentional: NodePool deletion last, so any pods evicted by
+# Ingress/LB/PVC churn can still reschedule briefly before the nodes go.
+#
+# CAUTION: phase 1c deletes ALL PVCs cluster-wide. Destructive for any
+# stateful workload using EBS/EFS volumes — appropriate for ephemeral
+# dev clusters (this stack), NOT for production data planes.
+ts; echo "phase 1: drain in-cluster AWS-attached resources"
 
+# 1a. Ingresses → ALB controller deletes ALBs + target groups
+ts; echo "  1a: delete all Ingress resources (ALB controller cleans up)"
+kubectl delete ingress -A --all --wait=false --ignore-not-found=true 2>&1 | sed 's/^/    /' || true
+poll_until_zero "  1a: ingresses" 600 '
+  kubectl get ingress -A --no-headers 2>/dev/null | wc -l | tr -d " "
+' || true
+
+# 1b. LoadBalancer Services → ALB controller deletes NLBs
+ts; echo "  1b: delete all LoadBalancer Services (NLB cleanup)"
+kubectl get svc -A --no-headers 2>/dev/null | awk '$5=="LoadBalancer" {print $1, $2}' | \
+  while read -r ns name; do
+    [[ -z "$ns" ]] && continue
+    kubectl delete svc "$name" -n "$ns" --wait=false --ignore-not-found=true 2>&1 | sed 's/^/    /' || true
+  done
+poll_until_zero "  1b: LB-svc" 600 '
+  kubectl get svc -A --no-headers 2>/dev/null | awk "\$5==\"LoadBalancer\"" | wc -l | tr -d " "
+' || true
+
+# 1c. PVCs → EBS/EFS CSI release backing volumes
+ts; echo "  1c: delete all PersistentVolumeClaims (CSI releases volumes — DESTRUCTIVE)"
+kubectl delete pvc -A --all --wait=false --ignore-not-found=true 2>&1 | sed 's/^/    /' || true
+poll_until_zero "  1c: pvcs" 600 '
+  kubectl get pvc -A --no-headers 2>/dev/null | wc -l | tr -d " "
+' || true
+
+# 1d. NodePools → Karpenter terminates NodeClaims + EC2
+ts; echo "  1d: delete all Karpenter NodePools (controller terminates EC2)"
+if kubectl get crd nodepools.karpenter.sh >/dev/null 2>&1; then
+  kubectl delete nodepools --all --wait=false --ignore-not-found=true 2>&1 | sed 's/^/    /' || true
+  poll_until_zero "  1d: nodeclaims" 600 '
+    kubectl get nodeclaims --no-headers 2>/dev/null | wc -l | tr -d " "
+  ' || true
+else
+  ts; echo "  1d: Karpenter CRDs not installed — skipping"
+fi
+echo ""
+
+# ---- Phase 2: cascade-delete ArgoCD root app -----------------------------
+# By now, all AWS-attached resources are gone, so this is just deleting
+# manifests/RBAC/CRDs. ArgoCD's resources-finalizer cascades through child
+# Apps regardless of phase 0's automated=null.
+ts; echo "phase 2: cascade-delete ArgoCD root-app (timeout 15m)"
 if kubectl get crd applications.argoproj.io >/dev/null 2>&1; then
   set +e
   kubectl delete application root-app -n argocd \
@@ -181,28 +307,13 @@ else
 fi
 echo ""
 
-# ---- Phase 3: wait for Ingress + LoadBalancer Services to drain -----------
-# AWS LB Controller must be alive to remove ALB/NLB finalizers. If the GitOps
-# stack already deleted the controller before its Ingresses/Services, those
-# objects will hang on finalizers and require unstick/ scripts.
-ts; echo "phase 3: wait for Ingress + LoadBalancer Services = 0 (timeout 10m)"
-poll_until_zero "ingress+LB-svc" 600 '
-  ing=$(kubectl get ingress -A --no-headers 2>/dev/null | wc -l | tr -d " ")
-  lb=$(kubectl get svc -A --no-headers 2>/dev/null | awk "\$3==\"LoadBalancer\"" | wc -l | tr -d " ")
-  echo $((ing + lb))
-' || true
-echo ""
-
-# ---- Phase 4: strip orphaned ArgoCD hook-finalizers in argocd ns ----------
+# ---- Phase 3: strip orphaned ArgoCD hook-finalizers in argocd ns ---------
 # ArgoCD's hook mechanism stamps `argocd.argoproj.io/hook-finalizer` on
 # resources spawned by Helm hooks during Application sync (e.g. the chart's
 # own argocd-redis-secret-init Job). Once ArgoCD itself is being torn down,
 # nothing remains to clear these finalizers — the argocd namespace then
-# hangs in Terminating for ~5min until `kubectl delete ns --force` or a
-# manual finalizer strip. We do the strip here proactively.
-#
-# Safe / idempotent: only matches resources that still carry the finalizer.
-ts; echo "phase 4: strip argocd hook-finalizers in argocd ns"
+# hangs in Terminating for ~5min until a manual finalizer strip.
+ts; echo "phase 3: strip argocd hook-finalizers in argocd ns"
 if kubectl get ns argocd >/dev/null 2>&1; then
   for kind in jobs.batch serviceaccounts roles.rbac.authorization.k8s.io rolebindings.rbac.authorization.k8s.io; do
     set +e
@@ -218,25 +329,22 @@ if kubectl get ns argocd >/dev/null 2>&1; then
     done <<< "$names"
   done
 else
-  ts; echo "phase 4: argocd ns absent — skipping"
+  ts; echo "phase 3: argocd ns absent — skipping"
 fi
 echo ""
 
-# ---- Phase 5: AWS-side sweep for orphan Karpenter instances --------------
-# Belt-and-suspenders: even with Phase 1 draining Karpenter cleanly, the
-# controller may not have finished terminating EC2 instances if it was
-# evicted mid-run, or if NodeClaims were cleaned but the underlying
-# instances lingered. Anything tagged `karpenter.sh/nodepool` AND
-# `kubernetes.io/cluster/<name>=owned` that's still running gets terminated
-# directly so Pulumi's cluster-SG delete doesn't block on stuck ENIs.
+# ---- Phase 4: AWS-side belt-and-suspenders sweep -------------------------
+# Catches anything controllers couldn't clean up: Karpenter EC2 instances
+# whose controller crashed mid-drain, ALBs/NLBs whose controller died
+# before clearing finalizers, etc. Tag filters scope to this cluster.
+ts; echo "phase 4: AWS-side sweep"
 sweep_orphan_karpenter_instances
 echo ""
+sweep_orphan_load_balancers
+echo ""
 
-# ---- Tail: LB controller eventual consistency -----------------------------
-# Even after Ingress/Service objects vanish, the LB controller may still be
-# finalizing target group / listener deletions in AWS. 30s buffer reduces
-# the chance of `pulumi destroy` racing those calls.
-ts; echo "settling 30s for LB controller eventual consistency"
+# ---- Phase 5: settle for AWS eventual consistency ------------------------
+ts; echo "phase 5: settling 30s for AWS eventual consistency"
 sleep 30
 
 ts; echo "pre-destroy: complete"
